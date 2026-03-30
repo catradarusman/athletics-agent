@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Environment — never commit secrets
+.env
+.env.local
+.env.*.local
+
+# TypeScript build output
+dist/
+
+# Hardhat artifacts & cache
+artifacts/
+cache/
+typechain-types/
+
+# Coverage reports
+coverage/
+coverage.json
+
+# Editor
+.DS_Store
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
