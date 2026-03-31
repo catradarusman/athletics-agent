@@ -66,7 +66,11 @@ The `/health` endpoint is used as the Railway healthcheck.
 
 ---
 
-## 3. Register the Neynar webhook
+## 3. Register Neynar webhooks
+
+Two webhooks are required. Both point to the same URL.
+
+**Webhook 1 — channel casts** (proof submissions from non-mentions)
 
 1. Go to [dev.neynar.com](https://dev.neynar.com) → your app → **Webhooks**.
 2. Create a new webhook:
@@ -74,11 +78,35 @@ The `/health` endpoint is used as the Railway healthcheck.
    - **Subscription type:** `cast.created`
    - **Channel filter:** `higher-athletics`
 3. Copy the **Webhook Secret** into `WEBHOOK_SECRET` in your environment variables.
-4. Copy the app's **API Key** into `NEYNAR_API_KEY`.
 
-The server verifies every incoming webhook request using HMAC-SHA512 over the raw request body (`x-neynar-signature` header). Requests with a missing or invalid signature are rejected with HTTP 401. In production (`NODE_ENV=production`), the server refuses to start without `WEBHOOK_SECRET`. In development, a warning is logged but requests are accepted.
+**Webhook 2 — bot mentions** (commands + conversational replies, including threads)
 
-The bot only processes casts from the `/higher-athletics` channel. Casts in other channels are ignored at the handler level.
+Neynar's channel filter misses threaded replies because they don't carry `channel.id`. A second webhook scoped to `mentioned_fid` catches all @mentions regardless of nesting.
+
+Create it via the Neynar API (the portal doesn't expose `mentioned_fids` as a filter option):
+
+```bash
+curl -X POST https://api.neynar.com/v2/farcaster/webhook \
+  -H "x-api-key: <NEYNAR_API_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "higherathletics-mentions",
+    "url": "https://<your-railway-url>/webhook",
+    "subscription": {
+      "cast.created": {
+        "mentioned_fids": [<BOT_FID>]
+      }
+    }
+  }'
+```
+
+The response includes a `secrets[0].value` — copy it into `WEBHOOK_SECRET_2` in your environment variables.
+
+The server accepts requests signed by either secret, so both webhooks share the same endpoint. Duplicate deliveries of the same cast (triggered by both webhooks) are deduplicated in memory.
+
+**Signature verification:** every `POST /webhook` is verified with HMAC-SHA512 over the raw request body (`x-neynar-signature` header) against `WEBHOOK_SECRET` and `WEBHOOK_SECRET_2`. Requests without a valid signature are rejected with HTTP 401. In production, the server refuses to start without `WEBHOOK_SECRET`. In development, a warning is logged but requests are accepted.
+
+The bot ignores `@mentions` outside `/higher-athletics`. Channel scoping is enforced in code via `channel.id`, `root_parent_url`, and `parent_url` checks.
 
 ---
 
@@ -165,7 +193,8 @@ After rotating: update `AGENT_PRIVATE_KEY` in your environment and restart the a
 | `NEYNAR_API_KEY` | yes | Neynar app API key |
 | `BOT_SIGNER_UUID` | yes | Managed signer UUID for the bot account |
 | `BOT_FID` | yes | Farcaster ID of the bot account |
-| `WEBHOOK_SECRET` | yes | Neynar webhook secret for payload verification |
+| `WEBHOOK_SECRET` | yes | Neynar webhook secret for the channel cast webhook |
+| `WEBHOOK_SECRET_2` | yes | Neynar webhook secret for the `mentioned_fid` webhook |
 | `ANTHROPIC_API_KEY` | yes | Claude API key for proof validation |
 | `DATABASE_URL` | yes | PostgreSQL connection string |
 | `BASE_RPC_URL` | yes | Base mainnet RPC (use Alchemy or Infura in production) |
@@ -204,6 +233,8 @@ Custom templates require at least 1 proof per week and at most 1 per day. Exampl
 
 Any other cast in the channel (without a bot mention) is treated as a proof submission and validated automatically.
 
+**Conversational replies:** any `@higherathletics` mention that doesn't match a command keyword triggers a short AI-generated reply from Claude (max 280 tokens). This includes threaded replies to bot casts. The bot answers questions about how it works, clarifies commitment status, and explains proof requirements — but never motivates, encourages, or gives financial advice. A per-user 60-second cooldown prevents reply loops.
+
 ---
 
 ## Cron jobs
@@ -234,7 +265,7 @@ The resolution cron also:
 
 ## Security notes
 
-- **Webhook signature:** every `POST /webhook` is verified with HMAC-SHA512 over the raw body using `WEBHOOK_SECRET`. Requests without a valid `x-neynar-signature` header are rejected with 401.
+- **Webhook signature:** every `POST /webhook` is verified with HMAC-SHA512 over the raw body against `WEBHOOK_SECRET` and `WEBHOOK_SECRET_2` (one per Neynar webhook). Either secret is accepted. Requests without a valid `x-neynar-signature` header are rejected with 401.
 - **Reentrancy:** all state-changing contract functions use OpenZeppelin `ReentrancyGuard`. `claim()` and `resolveCommitment()` follow Checks-Effects-Interactions.
 - **Access control:** `recordProof` and `resolveCommitment` require `AGENT_ROLE`; `seedPool`, `withdrawFees`, `pause`, and `updateAgent` require `DEFAULT_ADMIN_ROLE`.
 - **Agent key:** use a dedicated hot wallet for `AGENT_PRIVATE_KEY` — never the deployer key. Rotate via `npm run update-agent` without redeploying the contract.
