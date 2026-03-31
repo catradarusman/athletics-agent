@@ -537,21 +537,25 @@ export const webhookRouter = Router();
 
 webhookRouter.post('/webhook', async (req: Request, res: Response) => {
   // Verify Neynar webhook signature (HMAC-SHA512 over raw body)
-  const secret = process.env.WEBHOOK_SECRET;
+  // Supports two secrets: WEBHOOK_SECRET (channel webhook) and WEBHOOK_SECRET_2 (mentions webhook)
+  const secrets = [process.env.WEBHOOK_SECRET, process.env.WEBHOOK_SECRET_2].filter(Boolean) as string[];
   const rawBody = req.body as Buffer;
-  if (secret) {
+  if (secrets.length > 0) {
     const sig = req.headers['x-neynar-signature'] as string | undefined;
     if (!sig || !Buffer.isBuffer(rawBody)) {
       return res.status(401).send('missing signature');
     }
-    const hmac = crypto.createHmac('sha512', secret);
-    hmac.update(rawBody);
-    const digest = hmac.digest('hex');
-    try {
-      if (!crypto.timingSafeEqual(Buffer.from(sig, 'hex'), Buffer.from(digest, 'hex'))) {
-        return res.status(401).send('invalid signature');
+    const verified = secrets.some(secret => {
+      try {
+        const hmac = crypto.createHmac('sha512', secret);
+        hmac.update(rawBody);
+        const digest = hmac.digest('hex');
+        return crypto.timingSafeEqual(Buffer.from(sig, 'hex'), Buffer.from(digest, 'hex'));
+      } catch {
+        return false;
       }
-    } catch {
+    });
+    if (!verified) {
       return res.status(401).send('invalid signature');
     }
   } else {
