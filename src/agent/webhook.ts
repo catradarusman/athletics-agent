@@ -3,6 +3,7 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import type { CastWithInteractions } from '@neynar/nodejs-sdk/build/api/models/cast-with-interactions.js';
 import type { WebhookCastCreated } from '@neynar/nodejs-sdk/build/types/webhooks.js';
+import Anthropic from '@anthropic-ai/sdk';
 import { castReply, getUserByFid } from './bot.js';
 import { validateProof } from '../ai/validator.js';
 import * as replies from './replies.js';
@@ -31,6 +32,12 @@ import {
 const CHANNEL_ID = 'higher-athletics';
 const BOT_USERNAME = (process.env.BOT_USERNAME ?? 'higherathletics').toLowerCase();
 const MIN_NEYNAR_USER_SCORE = Number(process.env.MIN_NEYNAR_USER_SCORE ?? 0.5);
+
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+// fid → timestamp of last conversational reply (rate limiting)
+const conversationCooldowns = new Map<number, number>();
+const CONVERSATION_COOLDOWN_MS = 60_000;
 
 // ─── Templates ────────────────────────────────────────────────────────────────
 
@@ -73,6 +80,15 @@ function isChannelCast(cast: CastWithInteractions): boolean {
   if (cast.channel?.id === CHANNEL_ID) return true;
   const url = cast.root_parent_url ?? cast.parent_url ?? '';
   return url.includes(CHANNEL_ID);
+}
+
+function isRelatedToChannel(cast: CastWithInteractions): boolean {
+  if (cast.channel?.id === CHANNEL_ID) return true;
+  const rootUrl = cast.root_parent_url ?? '';
+  if (rootUrl.includes(CHANNEL_ID)) return true;
+  const parentUrl = cast.parent_url ?? '';
+  if (parentUrl.includes(CHANNEL_ID)) return true;
+  return false;
 }
 
 function hasImage(cast: CastWithInteractions): boolean {
@@ -439,6 +455,82 @@ async function handleProof(cast: CastWithInteractions): Promise<void> {
   }
 }
 
+async function handleConversation(cast: CastWithInteractions): Promise<void> {
+  const fid = cast.author.fid;
+
+  // Rate limit: one conversational reply per FID per 60 seconds
+  const lastReply = conversationCooldowns.get(fid);
+  if (lastReply !== undefined && Date.now() - lastReply < CONVERSATION_COOLDOWN_MS) {
+    await castReply(cast.hash, replies.conversationCooldown());
+    return;
+  }
+
+  const commitment = await getActiveCommitmentByFid(fid);
+
+  let userContext: string;
+  if (commitment) {
+    const dl = daysLeft(commitment.end_time);
+    userContext = `User context: active commitment "${commitment.template}", ${commitment.verified_proofs}/${commitment.required_proofs} proofs, ${dl} days remaining, ${commitment.pledge_amount} $HIGHER pledged.`;
+  } else {
+    userContext = `User context: no active commitment.`;
+  }
+
+  const systemPrompt = `You are the Higher Athletics bot on Farcaster. You live in the /higher-athletics channel.
+
+Voice rules — these are non-negotiable:
+- all lowercase. always.
+- no periods on the last line of your response
+- short sentences. no filler words. no adverbs.
+- you count. you don't motivate. you don't cheer.
+- last line carries the weight
+- never say "let's go", "you got this", "keep grinding", "proud of you" or any motivational language
+- never give financial advice about $HIGHER token price or trading
+- never speak on behalf of the Higher network or make promises about the protocol
+
+What you know:
+- how the commitment bot works (templates, tiers, pledging, proofs, payouts)
+- templates: sprint (7d/7), monthly-grind (30d/12), builders-block (14d/5), beast-mode (30d/30), custom (7-60d)
+- tiers: starter (1k), standard (5k), serious (10k), allin (25k $HIGHER)
+- payout: pledge minus 10% fee plus bonus from the prize pool
+- bonus = min(pledge × 50%, pool × 2%)
+- proofs: cast workout evidence in the channel. photos, screenshots, specific details required. generic statements don't count.
+- one active commitment per person at a time
+
+What you do:
+- answer questions about how the bot works
+- clarify commitment status if the user has one
+- explain proof requirements
+- point people to the right command if they seem lost
+- keep it brief. 1-3 lines max. you're a bot, not a friend.
+
+What you never do:
+- motivate or encourage
+- give opinions on fitness routines
+- discuss token price or investment
+- make up information you don't have
+- pretend to be human
+
+${userContext}`;
+
+  try {
+    const message = await anthropic.messages.create({
+      model:      'claude-sonnet-4-6',
+      max_tokens: 280,
+      system:     systemPrompt,
+      messages:   [{ role: 'user', content: cast.text }],
+    });
+
+    const content = message.content[0];
+    if (content.type !== 'text') return;
+
+    conversationCooldowns.set(fid, Date.now());
+    await castReply(cast.hash, content.text);
+  } catch (err) {
+    console.error('[webhook] handleConversation Claude API error for fid', fid, err);
+    // Silent failure — no fallback reply
+  }
+}
+
 // ─── Router ───────────────────────────────────────────────────────────────────
 
 export const webhookRouter = Router();
@@ -477,31 +569,30 @@ webhookRouter.post('/webhook', async (req: Request, res: Response) => {
   // it as Cast — treat it as CastWithInteractions.
   const cast = payload.data as unknown as CastWithInteractions;
 
-  if (!isChannelCast(cast)) return;
-
   const text  = cast.text ?? '';
   const words = text.trim().split(/\s+/);
   const lower = text.toLowerCase();
 
   try {
     if (isBotMentioned(cast)) {
+      if (!isRelatedToChannel(cast)) return;
+
       if (lower.includes('commit')) {
         await handleCommit(cast, words);
-      } else if (lower.includes('leaderboard')) {
-        await handleLeaderboard(cast);
       } else if (lower.includes('status')) {
         await handleStatus(cast);
       } else if (lower.includes('pool')) {
         await handlePool(cast);
+      } else if (lower.includes('leaderboard')) {
+        await handleLeaderboard(cast);
       } else {
-        await castReply(
-          cast.hash,
-          replies.noActiveCommitment(),
-        );
+        await handleConversation(cast);
       }
-    } else {
-      await handleProof(cast);
+      return;
     }
+
+    if (!isChannelCast(cast)) return;
+    await handleProof(cast);
   } catch (err) {
     console.error('[webhook] handler error:', err);
   }
