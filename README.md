@@ -76,7 +76,7 @@ The `/health` endpoint is used as the Railway healthcheck.
 3. Copy the **Webhook Secret** into `WEBHOOK_SECRET` in your environment variables.
 4. Copy the app's **API Key** into `NEYNAR_API_KEY`.
 
-The server verifies every incoming webhook request using HMAC-SHA512 over the raw request body (`x-neynar-signature` header). Requests with a missing or invalid signature are rejected with HTTP 401. `WEBHOOK_SECRET` must be set or all webhook requests will be accepted without verification.
+The server verifies every incoming webhook request using HMAC-SHA512 over the raw request body (`x-neynar-signature` header). Requests with a missing or invalid signature are rejected with HTTP 401. In production (`NODE_ENV=production`), the server refuses to start without `WEBHOOK_SECRET`. In development, a warning is logged but requests are accepted.
 
 The bot only processes casts from the `/higher-athletics` channel. Casts in other channels are ignored at the handler level.
 
@@ -176,6 +176,7 @@ After rotating: update `AGENT_PRIVATE_KEY` in your environment and restart the a
 | `PORT` | no | HTTP port (default: 3000) |
 | `NODE_ENV` | no | `production` disables dev tooling |
 | `CHAIN_ID` | no | `84532` to use Base Sepolia; defaults to Base mainnet |
+| `MIN_NEYNAR_USER_SCORE` | no | Minimum Neynar user score to create commitments (default: 0.5). Sybil protection. |
 | `DEPLOYER_PRIVATE_KEY` | deploy only | Deployer wallet for deploy/seed/update-agent scripts |
 | `FEE_RECIPIENT` | deploy only | Address for 10% protocol fees; defaults to deployer |
 | `AGENT_ADDRESS` | deploy only | Agent wallet address for `deploy.ts`; derived from `AGENT_PRIVATE_KEY` if unset |
@@ -189,13 +190,17 @@ In `/higher-athletics`, mention `@higherathletics`:
 
 ```
 @higherathletics commit <template> <tier>
+@higherathletics commit custom <days> <proofs> <tier>
 @higherathletics status
 @higherathletics pool
+@higherathletics leaderboard
 ```
 
-**Templates:** `sprint` (7d/7 proofs) · `monthly-grind` (30d/12) · `builders-block` (14d/5) · `beast-mode` (30d/30)
+**Templates:** `sprint` (7d/7 proofs) · `monthly-grind` (30d/12) · `builders-block` (14d/5) · `beast-mode` (30d/30) · `custom` (7-60 days, user sets proofs)
 
 **Tiers:** `starter` (1k) · `standard` (5k) · `serious` (10k) · `allin` (25k $HIGHER)
+
+Custom templates require at least 1 proof per week and at most 1 per day. Example: `@higherathletics commit custom 21 10 standard`
 
 Any other cast in the channel (without a bot mention) is treated as a proof submission and validated automatically.
 
@@ -211,7 +216,19 @@ Three jobs run automatically once the server is started:
 | Resolution | Every hour | Settles expired commitments onchain; updates DB only after tx confirms |
 | Weekly pool update | Mondays 12:00 UTC | Posts pool balance + weekly pass/fail stats to the channel |
 
-The resolution cron also backfills the onchain `commitment_id` for any commitment where the user delayed calling the contract, and cleans up orphaned DB records (intent announced but contract never called).
+The resolution cron also:
+- **Reconciles unrecorded proofs** before settling — retries any proofs that were accepted in DB but failed to record onchain, preventing DB/chain divergence from causing wrongful failures.
+- **Reads onchain status** after resolution to determine pass/fail for notifications (instead of relying on DB counts which may diverge).
+- **Backfills** the onchain `commitment_id` for any commitment where the user delayed calling the contract, and cleans up orphaned DB records (intent announced but contract never called).
+- **Tracks retries** per commitment (max 10) to avoid infinite loops on permanently failing transactions.
+
+---
+
+## Proof validation resilience
+
+- **Claude API down:** proofs are saved with `ai_valid=null` (pending) and the user sees "proof received, validating." A future cron pass or retry can validate them.
+- **Onchain recording failures:** each proof tracks `recorded_onchain` and `onchain_tx_hash` in the DB. The reconciliation cron retries unrecorded proofs before resolution.
+- **Unconfirmed commitments:** if a user posts a proof before their `createCommitment()` tx confirms, the bot replies asking them to repost after confirmation (instead of silently ignoring).
 
 ---
 
@@ -222,3 +239,5 @@ The resolution cron also backfills the onchain `commitment_id` for any commitmen
 - **Access control:** `recordProof` and `resolveCommitment` require `AGENT_ROLE`; `seedPool`, `withdrawFees`, `pause`, and `updateAgent` require `DEFAULT_ADMIN_ROLE`.
 - **Agent key:** use a dedicated hot wallet for `AGENT_PRIVATE_KEY` — never the deployer key. Rotate via `npm run update-agent` without redeploying the contract.
 - **SQL injection:** all database queries use parameterised `$1/$2/…` placeholders; no string interpolation.
+- **Sybil protection:** commitments require a minimum Neynar User Score (default 0.5). Users without a connected wallet are rejected.
+- **Startup validation:** in production, the server refuses to start without `WEBHOOK_SECRET`.

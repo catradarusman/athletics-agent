@@ -66,7 +66,8 @@ export async function validateProof(
       reason:  String(parsed.reason),
       summary: parsed.summary ? String(parsed.summary) : undefined,
     };
-  } catch {
+  } catch (err) {
+    console.error('[validator] Claude API or parse error:', err);
     return { valid: false, reason: 'validation error' };
   }
 }

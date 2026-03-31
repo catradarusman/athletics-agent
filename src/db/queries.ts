@@ -299,6 +299,52 @@ export async function recordPoolEvent(data: {
 }
 
 /**
+ * Mark a proof as successfully recorded onchain.
+ */
+export async function updateProofOnchainStatus(
+  proofId: number,
+  txHash: string,
+): Promise<void> {
+  await query(
+    `UPDATE proofs SET recorded_onchain = TRUE, onchain_tx_hash = $2 WHERE id = $1`,
+    [proofId, txHash],
+  );
+}
+
+/**
+ * Return all valid proofs for a commitment that have NOT been recorded onchain.
+ * Used by the reconciliation cron to retry failed onchain writes.
+ */
+export async function getUnrecordedProofs(commitmentId: number): Promise<Proof[]> {
+  const result = await query<Record<string, unknown>>(
+    `SELECT * FROM proofs
+     WHERE commitment_id = $1 AND ai_valid = TRUE AND recorded_onchain = FALSE
+     ORDER BY created_at ASC`,
+    [commitmentId],
+  );
+  return result.rows.map(toProof);
+}
+
+/**
+ * Return top N users by completed (passed/claimed) commitments.
+ */
+export async function getLeaderboard(limit: number = 10): Promise<Array<{ fid: number; completed: number }>> {
+  const result = await query<Record<string, unknown>>(
+    `SELECT fid, COUNT(*) AS completed
+     FROM commitments
+     WHERE status IN ('passed', 'claimed')
+     GROUP BY fid
+     ORDER BY completed DESC
+     LIMIT $1`,
+    [limit],
+  );
+  return result.rows.map(r => ({
+    fid:       Number((r as { fid: number }).fid),
+    completed: Number((r as { completed: string }).completed),
+  }));
+}
+
+/**
  * Return counts of commitments resolved as 'passed' or 'failed' since the
  * given cutoff date. Used by the weekly pool update cron.
  */

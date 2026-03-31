@@ -5,15 +5,20 @@ import {
   updateCommitmentStatus,
   recordPoolEvent,
   getWeeklyResolutionStats,
+  getUnrecordedProofs,
+  updateProofOnchainStatus,
   type Commitment,
 } from '../db/queries.js';
 import { castInChannel, getUserByFid } from './bot.js';
+import * as replies from './replies.js';
 import {
   resolveCommitmentOnchain,
+  recordProofOnchain,
   getPoolBalance,
   getPublicClient,
   getFidHasActive,
   getFidActiveId,
+  getCommitmentOnchain,
 } from '../chain/index.js';
 import { backfillCommitmentId } from '../db/queries.js';
 
@@ -26,6 +31,10 @@ const CHANNEL_ID = 'higher-athletics';
 const lastReminderAt = new Map<number, number>(); // commitmentId → epoch ms
 const REMINDER_COOLDOWN_MS = 24 * 60 * 60 * 1_000; // 24 hours
 const URGENT_WINDOW_MS     = 48 * 60 * 60 * 1_000; // 48 hours
+
+// Resolution retry tracking — prevent infinite retries on permanently failing txs
+const resolutionRetries = new Map<number, number>(); // commitmentId → retry count
+const MAX_RESOLUTION_RETRIES = 10;
 
 function canRemind(commitmentId: number): boolean {
   const last = lastReminderAt.get(commitmentId);
@@ -50,6 +59,10 @@ function proofFraction(c: Commitment): number {
 
 function daysLeft(c: Commitment): number {
   return Math.max(0, Math.ceil((c.end_time.getTime() - Date.now()) / 86_400_000));
+}
+
+function hoursLeft(c: Commitment): number {
+  return Math.max(0, Math.ceil((c.end_time.getTime() - Date.now()) / 3_600_000));
 }
 
 // ─── 1. REMINDER CRON — every 6 hours ────────────────────────────────────────
@@ -85,9 +98,9 @@ async function runReminderCron(): Promise<void> {
       let text: string;
       if (urgentWindow) {
         const needed = c.required_proofs - c.verified_proofs;
-        text = `@${username} ${needed} more proof${needed === 1 ? '' : 's'} needed. 48 hours.`;
+        text = `@${username} ${replies.reminderUrgent({ needed, hours: hoursLeft(c) })}`;
       } else {
-        text = `@${username} ${c.verified_proofs}/${c.required_proofs} proofs. ${daysLeft(c)} day${daysLeft(c) === 1 ? '' : 's'} left.`;
+        text = `@${username} ${replies.reminderGentle({ current: c.verified_proofs, total: c.required_proofs, daysLeft: daysLeft(c) })}`;
       }
 
       await castInChannel(text, CHANNEL_ID);
@@ -114,6 +127,13 @@ async function runResolutionCron(): Promise<void> {
 
   for (const c of expired) {
     try {
+      // M13: Check retry count — skip permanently failing commitments
+      const retries = resolutionRetries.get(c.id) ?? 0;
+      if (retries >= MAX_RESOLUTION_RETRIES) {
+        console.error(`[cron:resolution] commitment ${c.id} exceeded ${MAX_RESOLUTION_RETRIES} retries — skipping`);
+        continue;
+      }
+
       let commitmentId = c.commitment_id;
 
       // Backfill commitment_id from chain if missing
@@ -132,8 +152,31 @@ async function runResolutionCron(): Promise<void> {
           console.log(`[cron:resolution] backfilled commitment_id=${commitmentId} for db id=${c.id}`);
         } catch (err) {
           console.error(`[cron:resolution] backfill failed for commitment ${c.id}:`, err);
+          resolutionRetries.set(c.id, retries + 1);
           continue;
         }
+      }
+
+      // C3 fix: Reconcile unrecorded proofs before resolution
+      try {
+        const unrecorded = await getUnrecordedProofs(c.id);
+        for (const proof of unrecorded) {
+          try {
+            const txHash = await recordProofOnchain(BigInt(commitmentId));
+            const receipt = await getPublicClient().waitForTransactionReceipt({ hash: txHash });
+            if (receipt.status === 'success') {
+              await updateProofOnchainStatus(proof.id, txHash);
+              console.log(`[cron:resolution] reconciled proof ${proof.id} onchain`);
+            } else {
+              console.error(`[cron:resolution] proof ${proof.id} onchain tx reverted`);
+            }
+          } catch (err) {
+            console.error(`[cron:resolution] failed to reconcile proof ${proof.id}:`, err);
+            // Continue — try to reconcile as many as possible
+          }
+        }
+      } catch (err) {
+        console.error(`[cron:resolution] failed to fetch unrecorded proofs for commitment ${c.id}:`, err);
       }
 
       // Settle onchain
@@ -144,12 +187,23 @@ async function runResolutionCron(): Promise<void> {
       const receipt = await getPublicClient().waitForTransactionReceipt({ hash: txHash });
       if (receipt.status !== 'success') {
         console.error(`[cron:resolution] tx ${txHash} reverted for commitment ${c.id} — will retry next run`);
+        resolutionRetries.set(c.id, retries + 1);
         continue;
       }
 
-      const passed   = c.verified_proofs >= c.required_proofs;
-      const status   = passed ? 'passed' : 'failed';
-      const now      = new Date();
+      // H11 fix: Read actual resolved status from chain, not DB
+      let passed: boolean;
+      try {
+        const onchainState = await getCommitmentOnchain(BigInt(commitmentId));
+        passed = onchainState.status === 'Passed';
+      } catch {
+        // Fallback to DB if chain read fails
+        passed = c.verified_proofs >= c.required_proofs;
+        console.warn(`[cron:resolution] chain read failed for commitment ${c.id}, using DB state`);
+      }
+
+      const status = passed ? 'passed' : 'failed';
+      const now    = new Date();
 
       // Update DB only after confirmed onchain
       await updateCommitmentStatus(c.id, status, now);
@@ -164,21 +218,34 @@ async function runResolutionCron(): Promise<void> {
         });
       }
 
-      // Notify on Farcaster
+      // Notify on Farcaster using Higher voice
       const user     = await getUserByFid(c.fid);
       const username = user?.username ?? `fid:${c.fid}`;
 
       let text: string;
       if (passed) {
-        text = `@${username} ${c.verified_proofs}/${c.required_proofs}. commitment complete. claim your $HIGHER.`;
+        text = `@${username} ${replies.commitmentPassed({
+          current: c.verified_proofs,
+          total:   c.required_proofs,
+          payout:  Math.round(c.pledge_amount * 0.9),
+        })}`;
       } else {
-        text = `@${username} commitment ended. ${c.verified_proofs}/${c.required_proofs}. pledge to the pool.`;
+        text = `@${username} ${replies.commitmentFailed({
+          current: c.verified_proofs,
+          total:   c.required_proofs,
+          amount:  c.pledge_amount,
+        })}`;
       }
 
       await castInChannel(text, CHANNEL_ID);
       console.log(`[cron:resolution] notified fid=${c.fid} status=${status}`);
+
+      // Clean up retry counter on success
+      resolutionRetries.delete(c.id);
     } catch (err) {
-      console.error(`[cron:resolution] error processing commitment ${c.id}:`, err);
+      const retries = resolutionRetries.get(c.id) ?? 0;
+      resolutionRetries.set(c.id, retries + 1);
+      console.error(`[cron:resolution] error processing commitment ${c.id} (retry ${retries + 1}):`, err);
     }
   }
 }
@@ -195,10 +262,15 @@ async function runWeeklyPoolUpdate(): Promise<void> {
       Promise.resolve(new Date(Date.now() - 7 * 86_400_000)),
     ]);
 
-    const stats  = await getWeeklyResolutionStats(weekSince);
-    const amount = Number(poolBalanceWei / BigInt(10 ** 18));
+    const stats       = await getWeeklyResolutionStats(weekSince);
+    const poolBalance = Number(poolBalanceWei / BigInt(10 ** 18));
 
-    const text = `pool: ${amount.toLocaleString()} $HIGHER. ${activeCommitments.length} active. ${stats.passed} completed. ${stats.failed} failed this week.`;
+    const text = replies.weeklyUpdate({
+      poolBalance,
+      active: activeCommitments.length,
+      passed: stats.passed,
+      failed: stats.failed,
+    });
 
     await castInChannel(text, CHANNEL_ID);
     console.log('[cron:weekly] pool update cast');

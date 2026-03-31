@@ -3,14 +3,18 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import type { CastWithInteractions } from '@neynar/nodejs-sdk/build/api/models/cast-with-interactions.js';
 import type { WebhookCastCreated } from '@neynar/nodejs-sdk/build/types/webhooks.js';
-import { castReply } from './bot.js';
+import { castReply, getUserByFid } from './bot.js';
 import { validateProof } from '../ai/validator.js';
+import * as replies from './replies.js';
 import {
   getActiveCommitmentByFid,
   getProofsByCommitmentId,
   recordProof,
   createCommitment,
   backfillCommitmentId,
+  updateProofOnchainStatus,
+  getLeaderboard,
+  getAllActiveCommitments,
   type PledgeTier,
 } from '../db/queries.js';
 import {
@@ -19,12 +23,14 @@ import {
   createCommitmentTxData,
   getFidHasActive,
   getFidActiveId,
+  getPublicClient,
 } from '../chain/index.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const CHANNEL_ID = 'higher-athletics';
 const BOT_USERNAME = (process.env.BOT_USERNAME ?? 'higherathletics').toLowerCase();
+const MIN_NEYNAR_USER_SCORE = Number(process.env.MIN_NEYNAR_USER_SCORE ?? 0.5);
 
 // ─── Templates ────────────────────────────────────────────────────────────────
 
@@ -79,54 +85,111 @@ function hasImage(cast: CastWithInteractions): boolean {
   }) ?? false;
 }
 
+function daysLeft(endTime: Date): number {
+  return Math.max(0, Math.ceil((endTime.getTime() - Date.now()) / 86_400_000));
+}
+
+function getWalletAddress(cast: CastWithInteractions): string | null {
+  const addr =
+    (cast.author as unknown as { verified_addresses?: { eth_addresses?: string[] } })
+      .verified_addresses?.eth_addresses?.[0] ??
+    (cast.author as unknown as { custody_address?: string }).custody_address;
+  if (!addr || addr === '0x' || addr.length < 10) return null;
+  return addr;
+}
+
 // ─── Command handlers ─────────────────────────────────────────────────────────
 
 async function handleCommit(cast: CastWithInteractions, words: string[]): Promise<void> {
   const fid = cast.author.fid;
+
+  // Check Neynar User Score for sybil protection
+  try {
+    const user = await getUserByFid(fid);
+    const score = (user as unknown as { experimental?: { neynar_user_score?: number } })
+      ?.experimental?.neynar_user_score ?? 0;
+    if (score < MIN_NEYNAR_USER_SCORE) {
+      await castReply(
+        cast.hash,
+        `account score too low to commit. build your farcaster presence first`,
+      );
+      return;
+    }
+  } catch (err) {
+    console.error('[webhook] user score check failed for fid', fid, err);
+    // Continue — don't block on score fetch failure
+  }
 
   // Check for existing active commitment
   const existing = await getActiveCommitmentByFid(fid);
   if (existing) {
     await castReply(
       cast.hash,
-      `You already have an active commitment (${existing.template}). Finish it before starting a new one! 💪`,
+      `already have an active commitment (${existing.template}). finish it first`,
+    );
+    return;
+  }
+
+  // Check wallet
+  const walletAddress = getWalletAddress(cast);
+  if (!walletAddress) {
+    await castReply(
+      cast.hash,
+      `no wallet found on your farcaster account. connect a wallet first`,
     );
     return;
   }
 
   // Parse: @bot commit <template> <tier>
+  // Also supports: @bot commit custom <days> <proofs> <tier>
   const botIdx = words.findIndex(w => w.toLowerCase().startsWith(`@${BOT_USERNAME}`));
   const args   = words.slice(botIdx + 2); // skip "@bot" and "commit"
 
   const templateKey = args[0]?.toLowerCase();
-  const tierKey     = args[1]?.toLowerCase();
+  const tierKey     = args[args.length - 1]?.toLowerCase(); // tier is always last
 
-  const template = templateKey ? TEMPLATES[templateKey] : undefined;
-  const tier     = tierKey     ? TIERS[tierKey]         : undefined;
+  let template: Template | undefined;
+  let tier: Tier | undefined;
+
+  if (templateKey === 'custom') {
+    // Custom: @bot commit custom <days> <proofs> <tier>
+    const days   = parseInt(args[1], 10);
+    const proofs = parseInt(args[2], 10);
+    tier = tierKey ? TIERS[tierKey] : undefined;
+
+    if (!tier || isNaN(days) || isNaN(proofs) || days < 7 || days > 60 || proofs < Math.ceil(days / 7) || proofs > days) {
+      await castReply(
+        cast.hash,
+        [
+          `custom format: @${BOT_USERNAME} commit custom <days> <proofs> <tier>`,
+          `days: 7-60. proofs: at least 1/week, at most 1/day`,
+          `tiers: ${Object.keys(TIERS).join(' | ')}`,
+        ].join('\n'),
+      );
+      return;
+    }
+
+    template = { durationDays: days, requiredProofs: proofs, description: `${proofs}x over ${days} days` };
+  } else {
+    template = templateKey ? TEMPLATES[templateKey] : undefined;
+    tier     = tierKey     ? TIERS[tierKey]         : undefined;
+  }
 
   if (!template || !tier) {
-    const templateList = Object.keys(TEMPLATES).join(' | ');
-    const tierList     = Object.keys(TIERS).join(' | ');
-    await castReply(
-      cast.hash,
-      `To commit, reply with:\n@${BOT_USERNAME} commit <template> <tier>\n\nTemplates: ${templateList}\nTiers: ${tierList}`,
-    );
+    await castReply(cast.hash, replies.noActiveCommitment());
     return;
   }
 
+  const resolvedTemplateKey = templateKey === 'custom' ? `custom-${template.durationDays}d` : templateKey!;
+
   // Create DB commitment record (commitment_id backfilled once onchain tx confirms)
-  const walletAddress =
-    (cast.author as unknown as { verified_addresses?: { eth_addresses?: string[] } })
-      .verified_addresses?.eth_addresses?.[0] ??
-    (cast.author as unknown as { custody_address?: string }).custody_address ??
-    '0x';
   const now     = new Date();
   const endDate = new Date(now.getTime() + template.durationDays * 86_400_000);
   try {
     await createCommitment({
       fid,
       wallet_address:  walletAddress,
-      template:        templateKey!,
+      template:        resolvedTemplateKey,
       pledge_tier:     tier.name as PledgeTier,
       pledge_amount:   tier.amount,
       start_time:      now,
@@ -135,7 +198,6 @@ async function handleCommit(cast: CastWithInteractions, words: string[]): Promis
     });
   } catch (err) {
     console.error('[webhook] failed to create DB commitment for fid', fid, err);
-    // Continue — user still gets the tx instructions; DB record can be reconciled
   }
 
   const contractAddress = process.env.CONTRACT_ADDRESS ?? '(contract not configured)';
@@ -143,29 +205,34 @@ async function handleCommit(cast: CastWithInteractions, words: string[]): Promis
     try {
       return createCommitmentTxData(
         BigInt(fid),
-        tier.index,
-        BigInt(template.durationDays),
-        BigInt(template.requiredProofs),
+        tier!.index,
+        BigInt(template!.durationDays),
+        BigInt(template!.requiredProofs),
       );
     } catch {
       return null;
     }
   })();
 
-  const reply = [
-    `🏆 Ready to commit to "${templateKey}" at the ${tier.name} tier (${tier.amount.toLocaleString()} HIGHER)?`,
-    ``,
-    `📋 Your commitment: ${template.description}, ${template.requiredProofs} proofs required`,
-    `💰 Pledge: ${tier.amount.toLocaleString()} HIGHER tokens`,
-    ``,
-    `To lock it in, call createCommitment() on the contract:`,
-    `📄 ${contractAddress}`,
-    ...(txData ? [`Args: fid=${fid}, tier=${tier.index}, days=${template.durationDays}, proofs=${template.requiredProofs}`] : []),
-    ``,
-    `Once your tx confirms, start posting proof casts here and I'll validate them! 🎯`,
-  ].join('\n');
+  // Calculate first deadline for the Higher voice reply
+  const firstDeadline = new Date(now.getTime() + 7 * 86_400_000); // first week
+  const deadlineStr = `${firstDeadline.toISOString().split('T')[0]} UTC`;
 
-  await castReply(cast.hash, reply);
+  await castReply(
+    cast.hash,
+    [
+      replies.commitmentCreated({
+        template:       resolvedTemplateKey,
+        duration:       template.durationDays,
+        requiredProofs: template.requiredProofs,
+        amount:         tier.amount,
+        firstDeadline:  deadlineStr,
+      }),
+      ``,
+      `contract: ${contractAddress}`,
+      ...(txData ? [`args: fid=${fid}, tier=${tier.index}, days=${template.durationDays}, proofs=${template.requiredProofs}`] : []),
+    ].join('\n'),
+  );
 }
 
 async function handleStatus(cast: CastWithInteractions): Promise<void> {
@@ -173,49 +240,71 @@ async function handleStatus(cast: CastWithInteractions): Promise<void> {
   const commitment = await getActiveCommitmentByFid(fid);
 
   if (!commitment) {
-    await castReply(
-      cast.hash,
-      `No active commitment found for you. Start one with:\n@${BOT_USERNAME} commit <template> <tier>`,
-    );
+    await castReply(cast.hash, replies.noActiveCommitment());
     return;
   }
 
-  const now        = new Date();
-  const daysLeft   = Math.max(0, Math.ceil((commitment.end_time.getTime() - now.getTime()) / 86_400_000));
-  const pct        = Math.round((commitment.verified_proofs / commitment.required_proofs) * 100);
-  const bar        = '█'.repeat(Math.round(pct / 10)) + '░'.repeat(10 - Math.round(pct / 10));
+  const dl      = daysLeft(commitment.end_time);
+  const onTrack = commitment.required_proofs > 0
+    ? (commitment.verified_proofs / commitment.required_proofs) >= ((Date.now() - commitment.start_time.getTime()) / (commitment.end_time.getTime() - commitment.start_time.getTime())) * 0.8
+    : true;
 
   await castReply(
     cast.hash,
-    [
-      `📊 ${cast.author.username}'s commitment status:`,
-      `Goal: ${commitment.template} (${commitment.pledge_tier} tier, ${commitment.pledge_amount.toLocaleString()} HIGHER)`,
-      `Progress: ${bar} ${commitment.verified_proofs}/${commitment.required_proofs} proofs (${pct}%)`,
-      `Time left: ${daysLeft} day${daysLeft !== 1 ? 's' : ''}`,
-    ].join('\n'),
+    replies.status({
+      current:  commitment.verified_proofs,
+      total:    commitment.required_proofs,
+      daysLeft: dl,
+      amount:   commitment.pledge_amount,
+      onTrack,
+    }),
   );
 }
 
-async function handlePool(_cast: CastWithInteractions): Promise<void> {
-  let poolSize = '?';
+async function handlePool(cast: CastWithInteractions): Promise<void> {
+  let poolBalance = 0;
   try {
     const raw = await getPoolBalance();
-    // Convert from 18-decimal wei to whole tokens
-    poolSize = (Number(raw) / 1e18).toLocaleString(undefined, { maximumFractionDigits: 0 });
+    poolBalance = Number(raw / BigInt(10 ** 18));
   } catch {
-    // Contract not deployed yet or network error — reply with placeholder
+    // Contract not deployed yet or network error
+  }
+
+  let activeCount = 0;
+  try {
+    const active = await getAllActiveCommitments();
+    activeCount = active.length;
+  } catch {
+    // DB error — show 0
   }
 
   await castReply(
-    _cast.hash,
-    [
-      `🏊 Higher Athletics Prize Pool`,
-      ``,
-      `Current pool: ${poolSize} HIGHER`,
-      ``,
-      `Winners receive their pledge back + a share of forfeited pledges from athletes who didn't complete their commitment. 🏆`,
-    ].join('\n'),
+    cast.hash,
+    replies.poolInfo({ poolBalance, activeCount }),
   );
+}
+
+async function handleLeaderboard(cast: CastWithInteractions): Promise<void> {
+  try {
+    const leaders = await getLeaderboard(10);
+    if (leaders.length === 0) {
+      await castReply(cast.hash, `no completed commitments yet. be the first`);
+      return;
+    }
+
+    const lines = await Promise.all(
+      leaders.map(async (entry, i) => {
+        const user = await getUserByFid(entry.fid).catch(() => null);
+        const name = user?.username ?? `fid:${entry.fid}`;
+        return `${i + 1}. @${name} — ${entry.completed} completed`;
+      }),
+    );
+
+    await castReply(cast.hash, lines.join('\n'));
+  } catch (err) {
+    console.error('[webhook] leaderboard error:', err);
+    await castReply(cast.hash, `leaderboard unavailable right now`);
+  }
 }
 
 async function handleProof(cast: CastWithInteractions): Promise<void> {
@@ -228,12 +317,23 @@ async function handleProof(cast: CastWithInteractions): Promise<void> {
   if (commitment.commitment_id === null) {
     try {
       const hasActive = await getFidHasActive(BigInt(fid));
-      if (!hasActive) return; // onchain commitment not yet created — ignore proof
+      if (!hasActive) {
+        // C1 fix: tell user instead of silently ignoring
+        await castReply(
+          cast.hash,
+          `proof received. waiting for your commitment tx to confirm onchain. repost after it confirms`,
+        );
+        return;
+      }
       const onchainId = await getFidActiveId(BigInt(fid));
       await backfillCommitmentId(commitment.id, Number(onchainId));
       commitment = { ...commitment, commitment_id: Number(onchainId) };
     } catch (err) {
       console.error('[webhook] commitment_id backfill failed for fid', fid, err);
+      await castReply(
+        cast.hash,
+        `proof received but couldn't verify your onchain commitment. try again shortly`,
+      );
       return;
     }
   }
@@ -251,52 +351,92 @@ async function handleProof(cast: CastWithInteractions): Promise<void> {
     previousSummaries,
   );
 
-  if (!result.valid) {
-    await castReply(
-      cast.hash,
-      `❌ Proof not accepted: ${result.reason}\n\nPost a cast with more detail — distance, time, reps, or a screenshot from your tracking app.`,
-    );
+  // H6: If validation error (Claude down), don't reject — tell user we're retrying
+  if (!result.valid && result.reason === 'validation error') {
+    // Record proof with ai_valid=null (pending) for retry by cron
+    try {
+      await recordProof({
+        commitment_id: commitment.id,
+        cast_hash:     cast.hash,
+        fid,
+        cast_text:     cast.text,
+        has_image:     hasImage(cast),
+        ai_valid:      null,
+        ai_reason:     null,
+        ai_summary:    null,
+      });
+    } catch {
+      // Duplicate cast_hash or other DB error — ignore
+    }
+    await castReply(cast.hash, `proof received, validating. we'll count it once confirmed`);
     return;
   }
 
-  // Record in DB
-  await recordProof({
-    commitment_id: commitment.id,
-    cast_hash:     cast.hash,
-    fid,
-    cast_text:     cast.text,
-    has_image:     hasImage(cast),
-    ai_valid:      true,
-    ai_reason:     result.reason,
-    ai_summary:    result.summary ?? null,
-  });
+  if (!result.valid) {
+    await castReply(cast.hash, replies.proofInvalid());
+    return;
+  }
 
-  // Record onchain (best-effort — don't block the reply on tx confirmation)
+  // Record in DB (atomic: insert proof + increment verified_proofs)
+  let proof;
+  try {
+    proof = await recordProof({
+      commitment_id: commitment.id,
+      cast_hash:     cast.hash,
+      fid,
+      cast_text:     cast.text,
+      has_image:     hasImage(cast),
+      ai_valid:      true,
+      ai_reason:     result.reason,
+      ai_summary:    result.summary ?? null,
+    });
+  } catch (err: unknown) {
+    // Duplicate cast_hash → no-op
+    if ((err as { code?: string }).code === '23505') return;
+    throw err;
+  }
+
+  // C2 fix: Record onchain and track success/failure
   const newCount = commitment.verified_proofs + 1;
   if (commitment.commitment_id !== null) {
-    recordProofOnchain(BigInt(commitment.commitment_id)).catch(err => {
-      console.error(`[webhook] onchain recordProof failed for commitment ${commitment.commitment_id}:`, err);
-    });
+    recordProofOnchain(BigInt(commitment.commitment_id))
+      .then(async (txHash) => {
+        // Wait for confirmation then update DB
+        try {
+          const receipt = await getPublicClient().waitForTransactionReceipt({ hash: txHash });
+          if (receipt.status === 'success') {
+            await updateProofOnchainStatus(proof.id, txHash);
+          } else {
+            console.error(`[webhook] onchain recordProof tx reverted for proof ${proof.id}`);
+          }
+        } catch (err) {
+          console.error(`[webhook] onchain recordProof receipt failed for proof ${proof.id}:`, err);
+        }
+      })
+      .catch(err => {
+        console.error(`[webhook] onchain recordProof failed for proof ${proof.id}:`, err);
+      });
   }
 
   const remaining = commitment.required_proofs - newCount;
   const isComplete = remaining <= 0;
+  const dl = daysLeft(commitment.end_time);
 
-  await castReply(
-    cast.hash,
-    isComplete
-      ? [
-          `✅ Proof accepted! ${result.reason}`,
-          ``,
-          `🎉 You've completed your ${commitment.template} commitment! ${newCount}/${commitment.required_proofs} proofs recorded.`,
-          ``,
-          `Call claim() on the contract to get your pledge back + prize share! 🏆`,
-        ].join('\n')
-      : [
-          `✅ Proof accepted! ${result.reason}`,
-          `${newCount}/${commitment.required_proofs} proofs recorded — ${remaining} to go. Keep it up! 💪`,
-        ].join('\n'),
-  );
+  if (isComplete) {
+    await castReply(
+      cast.hash,
+      replies.commitmentPassed({
+        current: newCount,
+        total:   commitment.required_proofs,
+        payout:  Math.round(commitment.pledge_amount * 0.9), // approximate — actual bonus depends on pool
+      }),
+    );
+  } else {
+    await castReply(
+      cast.hash,
+      replies.proofValid({ current: newCount, total: commitment.required_proofs, daysLeft: dl }),
+    );
+  }
 }
 
 // ─── Router ───────────────────────────────────────────────────────────────────
@@ -322,6 +462,9 @@ webhookRouter.post('/webhook', async (req: Request, res: Response) => {
     } catch {
       return res.status(401).send('invalid signature');
     }
+  } else {
+    // H7: Warn loudly if no webhook secret
+    console.warn('[webhook] WARNING: WEBHOOK_SECRET not set — all webhooks accepted without verification');
   }
 
   // Acknowledge quickly so Neynar doesn't retry
@@ -344,6 +487,8 @@ webhookRouter.post('/webhook', async (req: Request, res: Response) => {
     if (isBotMentioned(cast)) {
       if (lower.includes('commit')) {
         await handleCommit(cast, words);
+      } else if (lower.includes('leaderboard')) {
+        await handleLeaderboard(cast);
       } else if (lower.includes('status')) {
         await handleStatus(cast);
       } else if (lower.includes('pool')) {
@@ -351,7 +496,7 @@ webhookRouter.post('/webhook', async (req: Request, res: Response) => {
       } else {
         await castReply(
           cast.hash,
-          `Hey! I can help with:\n• @${BOT_USERNAME} commit <template> <tier>\n• @${BOT_USERNAME} status\n• @${BOT_USERNAME} pool`,
+          replies.noActiveCommitment(),
         );
       }
     } else {

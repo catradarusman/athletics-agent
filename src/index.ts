@@ -7,6 +7,14 @@ import { registerCronJobs } from './agent/cron.js';
 const PORT = Number(process.env.PORT ?? 3000);
 
 async function main() {
+  // H7+M10: Enforce WEBHOOK_SECRET in production
+  if (!process.env.WEBHOOK_SECRET) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('WEBHOOK_SECRET is required in production — refusing to start without webhook verification');
+    }
+    console.warn('[boot] WARNING: WEBHOOK_SECRET not set — webhooks will be accepted without signature verification');
+  }
+
   await initDb();
   console.log('[boot] database connected');
 
