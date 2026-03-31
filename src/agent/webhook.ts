@@ -31,6 +31,7 @@ import {
 
 const CHANNEL_ID = 'higher-athletics';
 const BOT_USERNAME = (process.env.BOT_USERNAME ?? 'higherathletics').toLowerCase();
+const BOT_FID = Number(process.env.BOT_FID ?? 0);
 const MIN_NEYNAR_USER_SCORE = Number(process.env.MIN_NEYNAR_USER_SCORE ?? 0.5);
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 5 });
@@ -93,6 +94,10 @@ function isRelatedToChannel(cast: CastWithInteractions): boolean {
   const parentUrl = cast.parent_url ?? '';
   if (parentUrl.includes(CHANNEL_ID)) return true;
   return false;
+}
+
+function isReplyToBot(cast: CastWithInteractions): boolean {
+  return BOT_FID !== 0 && cast.parent_author?.fid === BOT_FID;
 }
 
 function hasImage(cast: CastWithInteractions): boolean {
@@ -620,6 +625,11 @@ webhookRouter.post('/webhook', async (req: Request, res: Response) => {
       } else {
         await handleConversation(cast);
       }
+      return;
+    }
+
+    if (isReplyToBot(cast) && isRelatedToChannel(cast)) {
+      await handleConversation(cast);
       return;
     }
 
