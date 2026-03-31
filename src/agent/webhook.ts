@@ -575,6 +575,9 @@ webhookRouter.post('/webhook', async (req: Request, res: Response) => {
     if (now - ts > HASH_TTL_MS) processedHashes.delete(hash);
   }
 
+  // Ignore the bot's own casts to prevent feedback loops
+  if (BOT_FID !== 0 && cast.author.fid === BOT_FID) return;
+
   const text  = cast.text ?? '';
   const words = text.trim().split(/\s+/);
   const lower = text.toLowerCase();

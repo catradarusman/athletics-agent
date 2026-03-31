@@ -48,7 +48,8 @@ export async function parseCommitment(text: string): Promise<ParseResult> {
       return { ok: false, error: 'could not parse your goal. try: "commit cycling every day for 2 weeks"' };
     }
 
-    const parsed = JSON.parse(block.text) as {
+    const raw = block.text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+    const parsed = JSON.parse(raw) as {
       ok:            boolean;
       activity?:     string;
       description?:  string;
