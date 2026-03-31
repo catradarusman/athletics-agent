@@ -8,7 +8,14 @@ import {
   type Commitment,
 } from '../db/queries.js';
 import { castInChannel, getUserByFid } from './bot.js';
-import { resolveCommitmentOnchain, getPoolBalance } from '../chain/index.js';
+import {
+  resolveCommitmentOnchain,
+  getPoolBalance,
+  getPublicClient,
+  getFidHasActive,
+  getFidActiveId,
+} from '../chain/index.js';
+import { backfillCommitmentId } from '../db/queries.js';
 
 const CHANNEL_ID = 'higher-athletics';
 
@@ -107,20 +114,44 @@ async function runResolutionCron(): Promise<void> {
 
   for (const c of expired) {
     try {
-      if (c.commitment_id === null) {
-        console.warn(`[cron:resolution] commitment ${c.id} has no onchain ID — skipping`);
-        continue;
+      let commitmentId = c.commitment_id;
+
+      // Backfill commitment_id from chain if missing
+      if (commitmentId === null) {
+        try {
+          const hasActive = await getFidHasActive(BigInt(c.fid));
+          if (!hasActive) {
+            // User never called createCommitment — orphaned DB record; clean it up
+            console.warn(`[cron:resolution] commitment ${c.id} fid=${c.fid} has no onchain commitment — marking failed`);
+            await updateCommitmentStatus(c.id, 'failed', new Date());
+            continue;
+          }
+          const onchainId = await getFidActiveId(BigInt(c.fid));
+          commitmentId = Number(onchainId);
+          await backfillCommitmentId(c.id, commitmentId);
+          console.log(`[cron:resolution] backfilled commitment_id=${commitmentId} for db id=${c.id}`);
+        } catch (err) {
+          console.error(`[cron:resolution] backfill failed for commitment ${c.id}:`, err);
+          continue;
+        }
       }
 
       // Settle onchain
-      const txHash = await resolveCommitmentOnchain(BigInt(c.commitment_id));
-      console.log(`[cron:resolution] resolved commitment ${c.id} tx=${txHash}`);
+      const txHash = await resolveCommitmentOnchain(BigInt(commitmentId));
+      console.log(`[cron:resolution] submitted resolve tx=${txHash} for commitment ${c.id}`);
+
+      // Wait for mining before updating DB — prevents DB/chain state divergence
+      const receipt = await getPublicClient().waitForTransactionReceipt({ hash: txHash });
+      if (receipt.status !== 'success') {
+        console.error(`[cron:resolution] tx ${txHash} reverted for commitment ${c.id} — will retry next run`);
+        continue;
+      }
 
       const passed   = c.verified_proofs >= c.required_proofs;
       const status   = passed ? 'passed' : 'failed';
       const now      = new Date();
 
-      // Update DB
+      // Update DB only after confirmed onchain
       await updateCommitmentStatus(c.id, status, now);
 
       // Log pool event for failures (pledge forfeited to pool)

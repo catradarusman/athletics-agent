@@ -324,6 +324,35 @@ export async function resolveCommitmentOnchain(commitmentId: bigint): Promise<Ha
 // ─── Read functions ───────────────────────────────────────────────────────────
 
 /**
+ * Whether the given FID currently has an active onchain commitment.
+ */
+export async function getFidHasActive(fid: bigint): Promise<boolean> {
+  const client  = getPublicClient();
+  const address = getContractAddress();
+  return client.readContract({
+    address,
+    abi:          POOL_ABI,
+    functionName: 'fidHasActive',
+    args:         [fid],
+  });
+}
+
+/**
+ * Return the onchain commitment ID for a FID's current active commitment.
+ * Only meaningful when getFidHasActive returns true.
+ */
+export async function getFidActiveId(fid: bigint): Promise<bigint> {
+  const client  = getPublicClient();
+  const address = getContractAddress();
+  return client.readContract({
+    address,
+    abi:          POOL_ABI,
+    functionName: 'fidActiveId',
+    args:         [fid],
+  });
+}
+
+/**
  * Read the current prize pool balance from the contract (raw wei, bigint).
  */
 export async function getPoolBalance(): Promise<bigint> {

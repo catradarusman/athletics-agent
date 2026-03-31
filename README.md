@@ -2,7 +2,13 @@
 
 Farcaster bot for [/higher-athletics](https://warpcast.com/~/channel/higher-athletics). Users pledge $HIGHER tokens against fitness commitments. The agent validates proof-of-work casts with Claude, records them onchain, and settles commitments automatically.
 
-**Flow:** user pledges → posts workout casts in /higher-athletics → agent validates each one with AI → after the commitment window closes, agent resolves onchain → pass: claim pledge back + bonus from the pool; fail: pledge forfeits to the pool.
+**Flow:**
+1. User calls `@higherathletics commit <template> <tier>` → bot records intent in DB and returns the contract call data
+2. User calls `createCommitment()` on the contract to lock their $HIGHER pledge onchain
+3. User posts workout casts in `/higher-athletics` → agent validates each with Claude AI and records proofs in DB + onchain
+4. After the commitment window closes, the resolution cron settles the commitment onchain (hourly)
+5. **Pass:** user calls `claim()` on the contract to receive pledge − 10% fee + bonus from the prize pool
+6. **Fail:** pledge is forfeited to the prize pool; the bot notifies in the channel
 
 ---
 
@@ -69,6 +75,8 @@ The `/health` endpoint is used as the Railway healthcheck.
    - **Channel filter:** `higher-athletics`
 3. Copy the **Webhook Secret** into `WEBHOOK_SECRET` in your environment variables.
 4. Copy the app's **API Key** into `NEYNAR_API_KEY`.
+
+The server verifies every incoming webhook request using HMAC-SHA512 over the raw request body (`x-neynar-signature` header). Requests with a missing or invalid signature are rejected with HTTP 401. `WEBHOOK_SECRET` must be set or all webhook requests will be accepted without verification.
 
 The bot only processes casts from the `/higher-athletics` channel. Casts in other channels are ignored at the handler level.
 
@@ -190,3 +198,27 @@ In `/higher-athletics`, mention `@higherathletics`:
 **Tiers:** `starter` (1k) · `standard` (5k) · `serious` (10k) · `allin` (25k $HIGHER)
 
 Any other cast in the channel (without a bot mention) is treated as a proof submission and validated automatically.
+
+---
+
+## Cron jobs
+
+Three jobs run automatically once the server is started:
+
+| Job | Schedule | Purpose |
+|---|---|---|
+| Reminder | Every 6 hours | Pings users who are behind on proofs or inside the 48-hour final window |
+| Resolution | Every hour | Settles expired commitments onchain; updates DB only after tx confirms |
+| Weekly pool update | Mondays 12:00 UTC | Posts pool balance + weekly pass/fail stats to the channel |
+
+The resolution cron also backfills the onchain `commitment_id` for any commitment where the user delayed calling the contract, and cleans up orphaned DB records (intent announced but contract never called).
+
+---
+
+## Security notes
+
+- **Webhook signature:** every `POST /webhook` is verified with HMAC-SHA512 over the raw body using `WEBHOOK_SECRET`. Requests without a valid `x-neynar-signature` header are rejected with 401.
+- **Reentrancy:** all state-changing contract functions use OpenZeppelin `ReentrancyGuard`. `claim()` and `resolveCommitment()` follow Checks-Effects-Interactions.
+- **Access control:** `recordProof` and `resolveCommitment` require `AGENT_ROLE`; `seedPool`, `withdrawFees`, `pause`, and `updateAgent` require `DEFAULT_ADMIN_ROLE`.
+- **Agent key:** use a dedicated hot wallet for `AGENT_PRIVATE_KEY` — never the deployer key. Rotate via `npm run update-agent` without redeploying the contract.
+- **SQL injection:** all database queries use parameterised `$1/$2/…` placeholders; no string interpolation.

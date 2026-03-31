@@ -1,4 +1,4 @@
-import { query } from './index.js';
+import { query, pool } from './index.js';
 
 // ─── Domain types ─────────────────────────────────────────────────────────────
 
@@ -135,29 +135,57 @@ export async function getActiveCommitmentByFid(
 }
 
 /**
- * Insert a proof row. cast_hash has a UNIQUE constraint — if the same cast
- * is submitted twice, pg will throw error code '23505'. The calling agent
- * should catch that and treat it as a no-op duplicate.
+ * Insert a proof row and atomically increment commitments.verified_proofs.
+ * cast_hash has a UNIQUE constraint — if the same cast is submitted twice,
+ * pg will throw error code '23505'. The calling agent should catch that and
+ * treat it as a no-op duplicate.
  */
 export async function recordProof(data: RecordProofInput): Promise<Proof> {
-  const result = await query<Record<string, unknown>>(
-    `INSERT INTO proofs
-       (commitment_id, cast_hash, fid, cast_text, has_image,
-        ai_valid, ai_reason, ai_summary)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-     RETURNING *`,
-    [
-      data.commitment_id,
-      data.cast_hash,
-      data.fid,
-      data.cast_text      ?? null,
-      data.has_image      ?? false,
-      data.ai_valid       ?? null,
-      data.ai_reason      ?? null,
-      data.ai_summary     ?? null,
-    ]
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const proofResult = await client.query<Record<string, unknown>>(
+      `INSERT INTO proofs
+         (commitment_id, cast_hash, fid, cast_text, has_image,
+          ai_valid, ai_reason, ai_summary)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING *`,
+      [
+        data.commitment_id,
+        data.cast_hash,
+        data.fid,
+        data.cast_text  ?? null,
+        data.has_image  ?? false,
+        data.ai_valid   ?? null,
+        data.ai_reason  ?? null,
+        data.ai_summary ?? null,
+      ]
+    );
+
+    await client.query(
+      `UPDATE commitments SET verified_proofs = verified_proofs + 1 WHERE id = $1`,
+      [data.commitment_id]
+    );
+
+    await client.query('COMMIT');
+    return toProof(proofResult.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Backfill the onchain commitment ID once the user's createCommitment tx confirms.
+ */
+export async function backfillCommitmentId(id: number, commitmentId: number): Promise<void> {
+  await query(
+    `UPDATE commitments SET commitment_id = $2 WHERE id = $1`,
+    [id, commitmentId]
   );
-  return toProof(result.rows[0]);
 }
 
 /**

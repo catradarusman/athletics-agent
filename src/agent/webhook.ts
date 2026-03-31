@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import type { CastWithInteractions } from '@neynar/nodejs-sdk/build/api/models/cast-with-interactions.js';
@@ -9,12 +10,15 @@ import {
   getProofsByCommitmentId,
   recordProof,
   createCommitment,
+  backfillCommitmentId,
   type PledgeTier,
 } from '../db/queries.js';
 import {
   recordProofOnchain,
   getPoolBalance,
   createCommitmentTxData,
+  getFidHasActive,
+  getFidActiveId,
 } from '../chain/index.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -110,6 +114,30 @@ async function handleCommit(cast: CastWithInteractions, words: string[]): Promis
     return;
   }
 
+  // Create DB commitment record (commitment_id backfilled once onchain tx confirms)
+  const walletAddress =
+    (cast.author as unknown as { verified_addresses?: { eth_addresses?: string[] } })
+      .verified_addresses?.eth_addresses?.[0] ??
+    (cast.author as unknown as { custody_address?: string }).custody_address ??
+    '0x';
+  const now     = new Date();
+  const endDate = new Date(now.getTime() + template.durationDays * 86_400_000);
+  try {
+    await createCommitment({
+      fid,
+      wallet_address:  walletAddress,
+      template:        templateKey!,
+      pledge_tier:     tier.name as PledgeTier,
+      pledge_amount:   tier.amount,
+      start_time:      now,
+      end_time:        endDate,
+      required_proofs: template.requiredProofs,
+    });
+  } catch (err) {
+    console.error('[webhook] failed to create DB commitment for fid', fid, err);
+    // Continue — user still gets the tx instructions; DB record can be reconciled
+  }
+
   const contractAddress = process.env.CONTRACT_ADDRESS ?? '(contract not configured)';
   const txData = (() => {
     try {
@@ -192,9 +220,23 @@ async function handlePool(_cast: CastWithInteractions): Promise<void> {
 
 async function handleProof(cast: CastWithInteractions): Promise<void> {
   const fid        = cast.author.fid;
-  const commitment = await getActiveCommitmentByFid(fid);
+  let commitment   = await getActiveCommitmentByFid(fid);
 
   if (!commitment) return; // silently ignore — no active commitment
+
+  // Backfill commitment_id from chain if the user's createCommitment tx has confirmed
+  if (commitment.commitment_id === null) {
+    try {
+      const hasActive = await getFidHasActive(BigInt(fid));
+      if (!hasActive) return; // onchain commitment not yet created — ignore proof
+      const onchainId = await getFidActiveId(BigInt(fid));
+      await backfillCommitmentId(commitment.id, Number(onchainId));
+      commitment = { ...commitment, commitment_id: Number(onchainId) };
+    } catch (err) {
+      console.error('[webhook] commitment_id backfill failed for fid', fid, err);
+      return;
+    }
+  }
 
   // Fetch previous proof summaries for dedup context
   const previousProofs   = await getProofsByCommitmentId(commitment.id);
@@ -262,10 +304,30 @@ async function handleProof(cast: CastWithInteractions): Promise<void> {
 export const webhookRouter = Router();
 
 webhookRouter.post('/webhook', async (req: Request, res: Response) => {
+  // Verify Neynar webhook signature (HMAC-SHA512 over raw body)
+  const secret = process.env.WEBHOOK_SECRET;
+  const rawBody = req.body as Buffer;
+  if (secret) {
+    const sig = req.headers['x-neynar-signature'] as string | undefined;
+    if (!sig || !Buffer.isBuffer(rawBody)) {
+      return res.status(401).send('missing signature');
+    }
+    const hmac = crypto.createHmac('sha512', secret);
+    hmac.update(rawBody);
+    const digest = hmac.digest('hex');
+    try {
+      if (!crypto.timingSafeEqual(Buffer.from(sig, 'hex'), Buffer.from(digest, 'hex'))) {
+        return res.status(401).send('invalid signature');
+      }
+    } catch {
+      return res.status(401).send('invalid signature');
+    }
+  }
+
   // Acknowledge quickly so Neynar doesn't retry
   res.sendStatus(200);
 
-  const payload = req.body as WebhookCastCreated;
+  const payload = JSON.parse(rawBody.toString('utf8')) as WebhookCastCreated;
   if (payload.type !== 'cast.created') return;
 
   // The webhook payload includes enriched cast fields even though the SDK types

@@ -11,6 +11,8 @@ async function main() {
   console.log('[boot] database connected');
 
   const app = express();
+  // Raw body for webhook signature verification — must come before express.json()
+  app.use('/webhook', express.raw({ type: 'application/json' }));
   app.use(express.json());
   app.use(webhookRouter);
 
