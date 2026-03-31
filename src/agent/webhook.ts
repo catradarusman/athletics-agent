@@ -33,7 +33,7 @@ const CHANNEL_ID = 'higher-athletics';
 const BOT_USERNAME = (process.env.BOT_USERNAME ?? 'higherathletics').toLowerCase();
 const MIN_NEYNAR_USER_SCORE = Number(process.env.MIN_NEYNAR_USER_SCORE ?? 0.5);
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 5 });
 
 // fid → timestamp of last conversational reply (rate limiting)
 const conversationCooldowns = new Map<number, number>();
