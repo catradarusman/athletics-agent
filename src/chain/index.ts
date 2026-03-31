@@ -218,12 +218,15 @@ let _walletClient: ReturnType<typeof createWalletClient> | null = null;
  */
 export function getPublicClient() {
   if (!_publicClient) {
+    // Cast needed: Base/BaseSepolia are OP Stack chains whose `getBlock` return
+    // type includes deposit transactions, which conflicts with the generic
+    // ReturnType<typeof createPublicClient>.
     _publicClient = createPublicClient({
       chain: getChain(),
       transport: http(getRpcUrl()),
-    });
+    }) as ReturnType<typeof createPublicClient>;
   }
-  return _publicClient;
+  return _publicClient!;
 }
 
 /**
@@ -244,7 +247,7 @@ export function getWalletClient() {
       transport: http(getRpcUrl()),
     });
   }
-  return _walletClient;
+  return _walletClient!;
 }
 
 // ─── Transaction-data helper (user-facing) ────────────────────────────────────
@@ -285,7 +288,10 @@ export function createCommitmentTxData(
  * Returns the transaction hash; caller should wait for receipt if needed.
  */
 export async function recordProofOnchain(commitmentId: bigint): Promise<Hash> {
-  const client  = getWalletClient();
+  // Cast needed: module-level variable loses account/chain generics from
+  // createWalletClient, so we assert to any to avoid spurious overload errors.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const client  = getWalletClient() as any;
   const address = getContractAddress();
 
   return client.writeContract({
@@ -293,7 +299,7 @@ export async function recordProofOnchain(commitmentId: bigint): Promise<Hash> {
     abi:          POOL_ABI,
     functionName: 'recordProof',
     args:         [commitmentId],
-  });
+  }) as Promise<Hash>;
 }
 
 /**
@@ -302,7 +308,9 @@ export async function recordProofOnchain(commitmentId: bigint): Promise<Hash> {
  * Only callable by the agent wallet (AGENT_ROLE required onchain).
  */
 export async function resolveCommitmentOnchain(commitmentId: bigint): Promise<Hash> {
-  const client  = getWalletClient();
+  // Cast needed: same reason as recordProofOnchain above.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const client  = getWalletClient() as any;
   const address = getContractAddress();
 
   return client.writeContract({
@@ -310,7 +318,7 @@ export async function resolveCommitmentOnchain(commitmentId: bigint): Promise<Ha
     abi:          POOL_ABI,
     functionName: 'resolveCommitment',
     args:         [commitmentId],
-  });
+  }) as Promise<Hash>;
 }
 
 // ─── Read functions ───────────────────────────────────────────────────────────
@@ -348,16 +356,17 @@ export async function getCommitmentOnchain(
     args:         [commitmentId],
   });
 
-  // raw is typed as { user: Address; fid: bigint; pledgeAmount: bigint; ... }
-  // because of the `as const` ABI definition above.
+  // viem v2 decodes multiple outputs as a readonly tuple (positional array).
+  // Indices match the ABI outputs order: user, fid, pledgeAmount, startTime,
+  // endTime, requiredProofs, verifiedProofs, status.
   return {
-    user:           raw.user,
-    fid:            raw.fid,
-    pledgeAmount:   raw.pledgeAmount,
-    startTime:      new Date(Number(raw.startTime) * 1_000),
-    endTime:        new Date(Number(raw.endTime)   * 1_000),
-    requiredProofs: raw.requiredProofs,
-    verifiedProofs: raw.verifiedProofs,
-    status:         STATUS_MAP[raw.status] ?? 'Active',
+    user:           raw[0] as Address,
+    fid:            raw[1] as bigint,
+    pledgeAmount:   raw[2] as bigint,
+    startTime:      new Date(Number(raw[3] as bigint) * 1_000),
+    endTime:        new Date(Number(raw[4] as bigint) * 1_000),
+    requiredProofs: raw[5] as bigint,
+    verifiedProofs: raw[6] as bigint,
+    status:         STATUS_MAP[raw[7] as number] ?? 'Active',
   };
 }

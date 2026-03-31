@@ -16,7 +16,7 @@
     "sourceMap": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "contracts"],
+  "exclude": ["node_modules", "dist", "contracts", "src/test"],
   "ts-node": {
     "esm": true,
     "experimentalSpecifierResolution": "node"
