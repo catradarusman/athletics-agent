@@ -39,6 +39,10 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const conversationCooldowns = new Map<number, number>();
 const CONVERSATION_COOLDOWN_MS = 60_000;
 
+// cast_hash → true: dedup across two webhooks firing for the same cast
+const processedHashes = new Map<string, number>();
+const HASH_TTL_MS = 30_000;
+
 // ─── Templates ────────────────────────────────────────────────────────────────
 
 interface Template {
@@ -457,10 +461,12 @@ async function handleProof(cast: CastWithInteractions): Promise<void> {
 
 async function handleConversation(cast: CastWithInteractions): Promise<void> {
   const fid = cast.author.fid;
+  console.log(`[webhook] handleConversation fid=${fid}`);
 
   // Rate limit: one conversational reply per FID per 60 seconds
   const lastReply = conversationCooldowns.get(fid);
   if (lastReply !== undefined && Date.now() - lastReply < CONVERSATION_COOLDOWN_MS) {
+    console.log(`[webhook] conversation cooldown for fid=${fid}`);
     await castReply(cast.hash, replies.conversationCooldown());
     return;
   }
@@ -513,6 +519,7 @@ What you never do:
 ${userContext}`;
 
   try {
+    console.log(`[webhook] calling Claude API for fid=${fid}`);
     const message = await anthropic.messages.create({
       model:      'claude-sonnet-4-6',
       max_tokens: 280,
@@ -521,8 +528,12 @@ ${userContext}`;
     });
 
     const content = message.content[0];
-    if (content.type !== 'text') return;
+    if (content.type !== 'text') {
+      console.error(`[webhook] unexpected content type from Claude: ${content.type}`);
+      return;
+    }
 
+    console.log(`[webhook] Claude reply for fid=${fid}: "${content.text.slice(0, 80)}"`);
     conversationCooldowns.set(fid, Date.now());
     await castReply(cast.hash, content.text);
   } catch (err) {
@@ -573,13 +584,30 @@ webhookRouter.post('/webhook', async (req: Request, res: Response) => {
   // it as Cast — treat it as CastWithInteractions.
   const cast = payload.data as unknown as CastWithInteractions;
 
+  // Dedup: two webhooks (channel + mentions) can fire for the same cast
+  const now = Date.now();
+  if (processedHashes.has(cast.hash)) {
+    console.log(`[webhook] skipping duplicate cast ${cast.hash}`);
+    return;
+  }
+  processedHashes.set(cast.hash, now);
+  // Prune old entries to prevent memory growth
+  for (const [hash, ts] of processedHashes) {
+    if (now - ts > HASH_TTL_MS) processedHashes.delete(hash);
+  }
+
   const text  = cast.text ?? '';
   const words = text.trim().split(/\s+/);
   const lower = text.toLowerCase();
 
+  console.log(`[webhook] cast ${cast.hash} fid=${cast.author.fid} channel=${cast.channel?.id ?? 'none'} root=${cast.root_parent_url ?? 'none'} mentioned=${isBotMentioned(cast)} text="${text.slice(0, 80)}"`);
+
   try {
     if (isBotMentioned(cast)) {
-      if (!isRelatedToChannel(cast)) return;
+      if (!isRelatedToChannel(cast)) {
+        console.log(`[webhook] ignoring mention outside higher-athletics`);
+        return;
+      }
 
       if (lower.includes('commit')) {
         await handleCommit(cast, words);
