@@ -542,8 +542,20 @@ ${userContext}`;
     conversationCooldowns.set(fid, Date.now());
     await castReply(cast.hash, content.text);
   } catch (err) {
-    console.error('[webhook] handleConversation Claude API error for fid', fid, err);
-    // Silent failure — no fallback reply
+    if (err instanceof Anthropic.APIError) {
+      console.error('[webhook] handleConversation Claude API error', {
+        fid,
+        status: err.status,
+        message: err.message,
+        name: err.name,
+        requestId: err.request_id,
+      });
+      if (err.status === 529 || err.status === 503) {
+        await castReply(cast.hash, replies.overloaded());
+      }
+    } else {
+      console.error('[webhook] handleConversation unexpected error for fid', fid, err);
+    }
   }
 }
 

@@ -131,6 +131,10 @@ export function conversationCooldown(): string {
   return `one thing at a time. try again in a minute`;
 }
 
+export function overloaded(): string {
+  return `overloaded right now. try again in a bit`;
+}
+
 export function noActiveCommitment(): string {
   return [
     `no active commitment found. start one:`,
