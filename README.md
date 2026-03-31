@@ -3,8 +3,8 @@
 Farcaster bot for [/higher-athletics](https://warpcast.com/~/channel/higher-athletics). Users pledge $HIGHER tokens against fitness commitments. The agent validates proof-of-work casts with Claude, records them onchain, and settles commitments automatically.
 
 **Flow:**
-1. User calls `@higherathletics commit <template> <tier>` → bot records intent in DB and returns the contract call data
-2. User calls `createCommitment()` on the contract to lock their $HIGHER pledge onchain
+1. User calls `@higherathletics commit [natural language goal]` → Claude parses the goal, bot records intent in DB as `pending_onchain`, and returns the encoded contract calldata + signing instructions
+2. User approves the pool contract to spend 5,000 $HIGHER, then calls `createCommitment()` on the contract to lock their pledge onchain
 3. User posts workout casts in `/higher-athletics` → agent validates each with Claude AI and records proofs in DB + onchain
 4. After the commitment window closes, the resolution cron settles the commitment onchain (hourly)
 5. **Pass:** user calls `claim()` on the contract to receive pledge − 10% fee + bonus from the prize pool
@@ -218,20 +218,35 @@ After rotating: update `AGENT_PRIVATE_KEY` in your environment and restart the a
 In `/higher-athletics`, mention `@higherathletics`:
 
 ```
-@higherathletics commit <template> <tier>
-@higherathletics commit custom <days> <proofs> <tier>
+@higherathletics commit [your goal]
 @higherathletics status
 @higherathletics pool
 @higherathletics leaderboard
 ```
 
-**Templates:** `sprint` (7d/7 proofs) · `monthly-grind` (30d/12) · `builders-block` (14d/5) · `beast-mode` (30d/30) · `custom` (7-60 days, user sets proofs)
+**Committing:** describe your goal in plain language — Claude parses it into duration + proof frequency.
 
-**Tiers:** `starter` (1k) · `standard` (5k) · `serious` (10k) · `allin` (25k $HIGHER)
+```
+@higherathletics commit cycling every day for 2 weeks
+@higherathletics commit run 5k three times a week for a month
+@higherathletics commit walk 30 mins daily for 3 weeks
+@higherathletics commit 3x/week gym for 4 weeks
+@higherathletics commit run 10k total in 7 days
+```
 
-Custom templates require at least 1 proof per week and at most 1 per day. Example: `@higherathletics commit custom 21 10 standard`
+Any exercise counts: running, cycling, walking, swimming, gym, yoga, and more. The bot validates the activity type against each proof you submit.
 
-Any other cast in the channel (without a bot mention) is treated as a proof submission and validated automatically.
+**Pledge:** fixed at **5,000 $HIGHER** for all commitments. No tier selection.
+
+**Commitment window:** 7–60 days. Proof frequency: at least 1 per week, at most 1 per day.
+
+**Locking the pledge (two steps after the bot replies):**
+1. Approve the pool contract to spend 5,000 $HIGHER on the $HIGHER token contract (`HIGHER_TOKEN_ADDRESS`)
+2. Submit the `createCommitment()` calldata shown in the bot's reply to the pool contract address
+
+The pledge is only locked once this on-chain transaction confirms.
+
+Any cast in the channel (without a bot mention) is treated as a proof submission and validated automatically.
 
 **Conversational replies:** any `@higherathletics` mention that doesn't match a command keyword triggers a short AI-generated reply from Claude (max 280 tokens). This includes threaded replies to bot casts. The bot answers questions about how it works, clarifies commitment status, and explains proof requirements — but never motivates, encourages, or gives financial advice. A per-user 60-second cooldown prevents reply loops.
 

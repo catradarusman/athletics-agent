@@ -5,6 +5,7 @@ import type { CastWithInteractions } from '@neynar/nodejs-sdk/build/api/models/c
 import type { WebhookCastCreated } from '@neynar/nodejs-sdk/build/types/webhooks.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { castReply, getUserByFid } from './bot.js';
+import { parseCommitment } from '../ai/parser.js';
 import { validateProof } from '../ai/validator.js';
 import * as replies from './replies.js';
 import {
@@ -16,7 +17,6 @@ import {
   updateProofOnchainStatus,
   getLeaderboard,
   getAllActiveCommitments,
-  type PledgeTier,
 } from '../db/queries.js';
 import {
   recordProofOnchain,
@@ -44,35 +44,12 @@ const CONVERSATION_COOLDOWN_MS = 60_000;
 const processedHashes = new Map<string, number>();
 const HASH_TTL_MS = 30_000;
 
-// ─── Templates ────────────────────────────────────────────────────────────────
+// ─── Pledge constants ─────────────────────────────────────────────────────────
+// Single fixed pledge amount: 5,000 $HIGHER (contract PLEDGE_TIERS[1]).
+// No tier selection — all commitments use the same stake.
 
-interface Template {
-  durationDays:   number;
-  requiredProofs: number;
-  description:    string;
-}
-
-const TEMPLATES: Record<string, Template> = {
-  'sprint':         { durationDays: 7,  requiredProofs: 7,  description: 'daily for 7 days' },
-  'monthly-grind':  { durationDays: 30, requiredProofs: 12, description: '3x/week for 30 days' },
-  'builders-block': { durationDays: 14, requiredProofs: 5,  description: '5 of 14 days' },
-  'beast-mode':     { durationDays: 30, requiredProofs: 30, description: 'daily for 30 days' },
-};
-
-// ─── Tiers ────────────────────────────────────────────────────────────────────
-
-interface Tier {
-  name:      PledgeTier;
-  amount:    number;   // whole HIGHER tokens
-  index:     bigint;
-}
-
-const TIERS: Record<string, Tier> = {
-  'starter':  { name: 'Starter',  amount: 1_000,  index: 0n },
-  'standard': { name: 'Standard', amount: 5_000,  index: 1n },
-  'serious':  { name: 'Serious',  amount: 10_000, index: 2n },
-  'allin':    { name: 'All-in',   amount: 25_000, index: 3n },
-};
+const PLEDGE_AMOUNT     = 5_000;  // whole HIGHER tokens
+const PLEDGE_TIER_INDEX = 1n;     // contract PLEDGE_TIERS[1] = 5k HIGHER
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -145,7 +122,7 @@ async function handleCommit(cast: CastWithInteractions, words: string[]): Promis
     // Continue — don't block on score fetch failure
   }
 
-  // Check for existing active commitment
+  // Check for existing active or pending commitment
   const existing = await getActiveCommitmentByFid(fid);
   if (existing) {
     await castReply(
@@ -165,97 +142,80 @@ async function handleCommit(cast: CastWithInteractions, words: string[]): Promis
     return;
   }
 
-  // Parse: @bot commit <template> <tier>
-  // Also supports: @bot commit custom <days> <proofs> <tier>
-  const botIdx = words.findIndex(w => w.toLowerCase().startsWith(`@${BOT_USERNAME}`));
-  const args   = words.slice(botIdx + 2); // skip "@bot" and "commit"
+  // Extract the goal text: everything after "@bot commit"
+  const botIdx   = words.findIndex(w => w.toLowerCase().startsWith(`@${BOT_USERNAME}`));
+  const goalText = words.slice(botIdx + 2).join(' ').trim(); // skip "@bot" and "commit"
 
-  const templateKey = args[0]?.toLowerCase();
-  const tierKey     = args[args.length - 1]?.toLowerCase(); // tier is always last
-
-  let template: Template | undefined;
-  let tier: Tier | undefined;
-
-  if (templateKey === 'custom') {
-    // Custom: @bot commit custom <days> <proofs> <tier>
-    const days   = parseInt(args[1], 10);
-    const proofs = parseInt(args[2], 10);
-    tier = tierKey ? TIERS[tierKey] : undefined;
-
-    if (!tier || isNaN(days) || isNaN(proofs) || days < 7 || days > 60 || proofs < Math.ceil(days / 7) || proofs > days) {
-      await castReply(
-        cast.hash,
-        [
-          `custom format: @${BOT_USERNAME} commit custom <days> <proofs> <tier>`,
-          `days: 7-60. proofs: at least 1/week, at most 1/day`,
-          `tiers: ${Object.keys(TIERS).join(' | ')}`,
-        ].join('\n'),
-      );
-      return;
-    }
-
-    template = { durationDays: days, requiredProofs: proofs, description: `${proofs}x over ${days} days` };
-  } else {
-    template = templateKey ? TEMPLATES[templateKey] : undefined;
-    tier     = tierKey     ? TIERS[tierKey]         : undefined;
-  }
-
-  if (!template || !tier) {
+  if (!goalText) {
     await castReply(cast.hash, replies.noActiveCommitment());
     return;
   }
 
-  const resolvedTemplateKey = templateKey === 'custom' ? `custom-${template.durationDays}d` : templateKey!;
+  // Parse commitment intent with Claude
+  const parsed = await parseCommitment(goalText);
+  if (!parsed.ok) {
+    await castReply(cast.hash, parsed.error);
+    return;
+  }
 
-  // Create DB commitment record (commitment_id backfilled once onchain tx confirms)
+  const { description, durationDays, requiredProofs } = parsed.data;
+
+  // Create DB record as pending_onchain — tokens not locked until user signs the tx
   const now     = new Date();
-  const endDate = new Date(now.getTime() + template.durationDays * 86_400_000);
+  const endDate = new Date(now.getTime() + durationDays * 86_400_000);
   try {
     await createCommitment({
       fid,
       wallet_address:  walletAddress,
-      template:        resolvedTemplateKey,
-      pledge_tier:     tier.name as PledgeTier,
-      pledge_amount:   tier.amount,
+      template:        description,
+      pledge_tier:     'Standard',
+      pledge_amount:   PLEDGE_AMOUNT,
       start_time:      now,
       end_time:        endDate,
-      required_proofs: template.requiredProofs,
+      required_proofs: requiredProofs,
+      status:          'pending_onchain',
     });
   } catch (err) {
     console.error('[webhook] failed to create DB commitment for fid', fid, err);
   }
 
   const contractAddress = process.env.CONTRACT_ADDRESS ?? '(contract not configured)';
+  const tokenAddress    = process.env.HIGHER_TOKEN_ADDRESS ?? '(token not configured)';
+  const amountWei       = BigInt(PLEDGE_AMOUNT) * BigInt(10 ** 18);
+
   const txData = (() => {
     try {
       return createCommitmentTxData(
         BigInt(fid),
-        tier!.index,
-        BigInt(template!.durationDays),
-        BigInt(template!.requiredProofs),
+        PLEDGE_TIER_INDEX,
+        BigInt(durationDays),
+        BigInt(requiredProofs),
       );
     } catch {
       return null;
     }
   })();
 
-  // Calculate first deadline for the Higher voice reply
-  const firstDeadline = new Date(now.getTime() + 7 * 86_400_000); // first week
-  const deadlineStr = `${firstDeadline.toISOString().split('T')[0]} UTC`;
+  // First deadline = end of first week
+  const firstDeadline = new Date(now.getTime() + 7 * 86_400_000);
+  const deadlineStr   = `${firstDeadline.toISOString().split('T')[0]} UTC`;
 
   await castReply(
     cast.hash,
     [
       replies.commitmentCreated({
-        template:       resolvedTemplateKey,
-        duration:       template.durationDays,
-        requiredProofs: template.requiredProofs,
-        amount:         tier.amount,
-        firstDeadline:  deadlineStr,
+        description,
+        durationDays,
+        requiredProofs,
+        amount:        PLEDGE_AMOUNT,
+        firstDeadline: deadlineStr,
       }),
       ``,
-      `contract: ${contractAddress}`,
-      ...(txData ? [`args: fid=${fid}, tier=${tier.index}, days=${template.durationDays}, proofs=${template.requiredProofs}`] : []),
+      `to lock your pledge onchain (two steps):`,
+      `1. approve $HIGHER: call approve(${contractAddress}, ${amountWei}) on ${tokenAddress}`,
+      `2. call createCommitment on ${contractAddress}:`,
+      ...(txData ? [`   ${txData.data}`] : [`   (contract not configured)`]),
+      `pledge is only locked once this tx confirms`,
     ].join('\n'),
   );
 }
@@ -499,12 +459,14 @@ Voice rules — these are non-negotiable:
 - never speak on behalf of the Higher network or make promises about the protocol
 
 What you know:
-- how the commitment bot works (templates, tiers, pledging, proofs, payouts)
-- templates: sprint (7d/7), monthly-grind (30d/12), builders-block (14d/5), beast-mode (30d/30), custom (7-60d)
-- tiers: starter (1k), standard (5k), serious (10k), allin (25k $HIGHER)
+- how the commitment bot works (pledging, proofs, payouts)
+- command: @higherathletics commit [your goal] — any exercise counts (running, cycling, walking, swimming, gym, etc.)
+- examples: "commit cycling every day for 2 weeks", "commit run 5k three times a week for a month"
+- fixed pledge: 5,000 $HIGHER per commitment. no tiers.
+- duration: 7–60 days. frequency: at least 1 proof/week, at most 1/day.
 - payout: pledge minus 10% fee plus bonus from the prize pool
 - bonus = min(pledge × 50%, pool × 2%)
-- proofs: cast workout evidence in the channel. photos, screenshots, specific details required. generic statements don't count.
+- proofs: cast workout evidence in the channel. photos, tracking app screenshots, specific details required. generic statements don't count.
 - one active commitment per person at a time
 
 What you do:

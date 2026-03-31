@@ -40,7 +40,8 @@ export async function validateProof(
     `- Has image: ${hasImage ? 'yes' : 'no'}\n\n` +
     `Rules:\n` +
     `1. The cast must show evidence of the SPECIFIC activity committed to.\n` +
-    `2. Acceptable: photos, tracking app screenshots (Strava, Nike Run Club), specific descriptions with details (distance, time, location, reps, duration).\n` +
+    `2. Any form of physical exercise counts (running, cycling, walking, swimming, gym, yoga, etc.).\n` +
+    `   Acceptable evidence: photos, tracking app screenshots (Strava, Garmin, Nike Run Club, Wahoo), specific descriptions with details (distance, time, location, reps, duration).\n` +
     `3. Generic statements ("went hard today", "did the thing") without specifics = INVALID.\n` +
     `4. Near-duplicate of a previous proof summary = INVALID.\n` +
     `5. Benefit of the doubt on borderline cases.\n\n` +

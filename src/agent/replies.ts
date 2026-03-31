@@ -11,15 +11,15 @@ function fmt(n: number): string {
 // ─── Templates ────────────────────────────────────────────────────────────────
 
 export function commitmentCreated(p: {
-  template:       string;
-  duration:       number;
+  description:    string;
+  durationDays:   number;
   requiredProofs: number;
   amount:         number;
   firstDeadline:  string;
 }): string {
   return [
-    `locked in. ${p.template} — ${p.duration} days, ${p.requiredProofs} proofs needed.`,
-    `pledge: ${fmt(p.amount)} $HIGHER.`,
+    `commitment queued. ${p.description}.`,
+    `${p.requiredProofs} proof${p.requiredProofs === 1 ? '' : 's'} over ${p.durationDays} days. pledge: ${fmt(p.amount)} $HIGHER (sign tx below to lock it in).`,
     `first proof due by ${p.firstDeadline}.`,
     `cast your work in /higher-athletics. i'm watching`,
   ].join('\n');
@@ -138,8 +138,9 @@ export function overloaded(): string {
 export function noActiveCommitment(): string {
   return [
     `no active commitment found. start one:`,
-    `@higherathletics commit [template] [tier]`,
-    `templates: sprint, monthly-grind, builders-block, beast-mode`,
-    `tiers: starter (1k), standard (5k), serious (10k), allin (25k)`,
+    `@higherathletics commit [your goal]`,
+    `e.g. "commit cycling every day for 2 weeks"`,
+    `e.g. "commit run 5k three times a week for a month"`,
+    `pledge: 5,000 $HIGHER. any exercise counts`,
   ].join('\n');
 }

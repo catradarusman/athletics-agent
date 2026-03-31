@@ -2,8 +2,8 @@ import { query, pool } from './index.js';
 
 // ─── Domain types ─────────────────────────────────────────────────────────────
 
-export type CommitmentStatus = 'active' | 'passed' | 'failed' | 'claimed';
-export type PledgeTier       = 'Starter' | 'Standard' | 'Serious' | 'All-in';
+export type CommitmentStatus = 'active' | 'pending_onchain' | 'passed' | 'failed' | 'claimed';
+export type PledgeTier       = 'Standard';
 export type PoolEventType    = 'seed' | 'failure' | 'payout' | 'fee_withdrawal';
 
 export interface Commitment {
@@ -61,6 +61,7 @@ export interface CreateCommitmentInput {
   end_time:        Date;
   required_proofs: number;
   tx_hash?:        string | null;
+  status?:         CommitmentStatus;  // defaults to 'active' in DB if omitted
 }
 
 export interface RecordProofInput {
@@ -98,8 +99,8 @@ export async function createCommitment(
   const result = await query<Record<string, unknown>>(
     `INSERT INTO commitments
        (commitment_id, fid, wallet_address, template, pledge_tier,
-        pledge_amount, start_time, end_time, required_proofs, tx_hash)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        pledge_amount, start_time, end_time, required_proofs, tx_hash, status)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, 'active'))
      RETURNING *`,
     [
       data.commitment_id ?? null,
@@ -112,6 +113,7 @@ export async function createCommitment(
       data.end_time,
       data.required_proofs,
       data.tx_hash ?? null,
+      data.status   ?? null,
     ]
   );
   return toCommitment(result.rows[0]);
@@ -127,7 +129,7 @@ export async function getActiveCommitmentByFid(
 ): Promise<Commitment | null> {
   const result = await query<Record<string, unknown>>(
     `SELECT * FROM commitments
-     WHERE fid = $1 AND status = 'active'
+     WHERE fid = $1 AND status IN ('active', 'pending_onchain')
      LIMIT 1`,
     [fid]
   );
@@ -183,7 +185,7 @@ export async function recordProof(data: RecordProofInput): Promise<Proof> {
  */
 export async function backfillCommitmentId(id: number, commitmentId: number): Promise<void> {
   await query(
-    `UPDATE commitments SET commitment_id = $2 WHERE id = $1`,
+    `UPDATE commitments SET commitment_id = $2, status = 'active' WHERE id = $1`,
     [id, commitmentId]
   );
 }
@@ -244,7 +246,7 @@ export async function updateCommitmentStatus(
 export async function getExpiredActiveCommitments(): Promise<Commitment[]> {
   const result = await query<Record<string, unknown>>(
     `SELECT * FROM commitments
-     WHERE status = 'active' AND end_time < $1
+     WHERE status IN ('active', 'pending_onchain') AND end_time < $1
      ORDER BY end_time ASC`,
     [new Date()]
   );
@@ -269,7 +271,7 @@ export async function getCommitmentById(
  */
 export async function getAllActiveCommitments(): Promise<Commitment[]> {
   const result = await query<Record<string, unknown>>(
-    `SELECT * FROM commitments WHERE status = 'active' ORDER BY created_at ASC`,
+    `SELECT * FROM commitments WHERE status IN ('active', 'pending_onchain') ORDER BY created_at ASC`,
     []
   );
   return result.rows.map(toCommitment);
