@@ -432,7 +432,6 @@ async function handleConversation(cast: CastWithInteractions): Promise<void> {
   const lastReply = conversationCooldowns.get(fid);
   if (lastReply !== undefined && Date.now() - lastReply < CONVERSATION_COOLDOWN_MS) {
     console.log(`[webhook] conversation cooldown for fid=${fid}`);
-    await castReply(cast.hash, replies.conversationCooldown());
     return;
   }
 
@@ -522,6 +521,10 @@ ${userContext}`;
 }
 
 // ─── Router ───────────────────────────────────────────────────────────────────
+
+if (BOT_FID === 0) {
+  console.warn('[webhook] WARNING: BOT_FID not set — self-filter disabled, bot may reply to its own casts and loop');
+}
 
 export const webhookRouter = Router();
 
