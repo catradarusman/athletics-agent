@@ -432,6 +432,7 @@ async function handleConversation(cast: CastWithInteractions): Promise<void> {
   const lastReply = conversationCooldowns.get(fid);
   if (lastReply !== undefined && Date.now() - lastReply < CONVERSATION_COOLDOWN_MS) {
     console.log(`[webhook] conversation cooldown for fid=${fid}`);
+    await castReply(cast.hash, replies.conversationCooldown());
     return;
   }
 
@@ -474,6 +475,7 @@ What you do:
 - explain proof requirements
 - point people to the right command if they seem lost
 - keep it brief. 1-3 lines max. you're a bot, not a friend.
+- keep responses under 300 characters total. one cast only.
 
 What you never do:
 - motivate or encourage
@@ -488,7 +490,7 @@ ${userContext}`;
     console.log(`[webhook] calling Claude API for fid=${fid}`);
     const message = await anthropic.messages.create({
       model:      'claude-sonnet-4-6',
-      max_tokens: 280,
+      max_tokens: 100,
       system:     systemPrompt,
       messages:   [{ role: 'user', content: cast.text }],
     });
@@ -499,9 +501,10 @@ ${userContext}`;
       return;
     }
 
-    console.log(`[webhook] Claude reply for fid=${fid}: "${content.text.slice(0, 80)}"`);
+    const reply = content.text.slice(0, 320);
+    console.log(`[webhook] Claude reply for fid=${fid}: "${reply.slice(0, 80)}"`);
     conversationCooldowns.set(fid, Date.now());
-    await castReply(cast.hash, content.text);
+    await castReply(cast.hash, reply);
   } catch (err) {
     if (err instanceof Anthropic.APIError) {
       console.error('[webhook] handleConversation Claude API error', {
@@ -594,13 +597,16 @@ webhookRouter.post('/webhook', async (req: Request, res: Response) => {
         return;
       }
 
-      if (lower.includes('commit')) {
+      const botIdx = words.findIndex(w => w.toLowerCase().startsWith(`@${BOT_USERNAME}`));
+      const commandWord = botIdx >= 0 ? (words[botIdx + 1] ?? '').toLowerCase() : '';
+
+      if (commandWord === 'commit') {
         await handleCommit(cast, words);
-      } else if (lower.includes('status')) {
+      } else if (commandWord === 'status') {
         await handleStatus(cast);
-      } else if (lower.includes('pool')) {
+      } else if (commandWord === 'pool') {
         await handlePool(cast);
-      } else if (lower.includes('leaderboard')) {
+      } else if (commandWord === 'leaderboard') {
         await handleLeaderboard(cast);
       } else {
         await handleConversation(cast);

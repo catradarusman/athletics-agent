@@ -248,7 +248,7 @@ The pledge is only locked once this on-chain transaction confirms.
 
 Any cast in the channel (without a bot mention) is treated as a proof submission and validated automatically.
 
-**Conversational replies:** any `@higherathletics` mention that doesn't match a command keyword triggers a short AI-generated reply from Claude (max 280 tokens). This includes threaded replies to bot casts. The bot answers questions about how it works, clarifies commitment status, and explains proof requirements — but never motivates, encourages, or gives financial advice. A per-user 60-second cooldown prevents reply loops.
+**Conversational replies:** any `@higherathletics` mention where the first word after the mention is not a recognized command (`commit`, `status`, `pool`, `leaderboard`) triggers a short AI-generated reply from Claude. This covers natural language questions like "what can you do?", "how do I pledge?", "why should I use this?" and threaded replies to bot casts. The bot answers questions about how it works, clarifies commitment status, and explains proof requirements — but never motivates, encourages, or gives financial advice. Replies are capped at 300 characters (one cast). A per-user 60-second cooldown prevents reply loops; hitting the cooldown returns a brief notice instead of silently dropping the message.
 
 ---
 
