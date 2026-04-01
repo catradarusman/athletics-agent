@@ -3,7 +3,7 @@ import { query, pool } from './index.js';
 // ─── Domain types ─────────────────────────────────────────────────────────────
 
 export type CommitmentStatus = 'active' | 'pending_onchain' | 'passed' | 'failed' | 'claimed';
-export type PledgeTier       = 'Standard';
+export type PledgeTier       = 'Standard' | 'Serious';
 export type PoolEventType    = 'seed' | 'failure' | 'payout' | 'fee_withdrawal';
 
 export interface Commitment {

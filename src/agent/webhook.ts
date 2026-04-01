@@ -47,7 +47,7 @@ const HASH_TTL_MS = 30_000;
 // ─── Commitment tiers ─────────────────────────────────────────────────────────
 // Two fixed tiers keyed by duration. Only 15- and 30-day commitments are allowed.
 
-const COMMITMENT_TIERS: Record<number, { amount: number; tierIndex: bigint; tierName: string }> = {
+const COMMITMENT_TIERS: Record<number, { amount: number; tierIndex: bigint; tierName: import('../db/queries.js').PledgeTier }> = {
   15: { amount:  5_000, tierIndex: 1n, tierName: 'Standard' },
   30: { amount: 10_000, tierIndex: 2n, tierName: 'Serious'  },
 };
