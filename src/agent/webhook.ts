@@ -44,12 +44,13 @@ const CONVERSATION_COOLDOWN_MS = 60_000;
 const processedHashes = new Map<string, number>();
 const HASH_TTL_MS = 30_000;
 
-// ─── Pledge constants ─────────────────────────────────────────────────────────
-// Single fixed pledge amount: 5,000 $HIGHER (contract PLEDGE_TIERS[1]).
-// No tier selection — all commitments use the same stake.
+// ─── Commitment tiers ─────────────────────────────────────────────────────────
+// Two fixed tiers keyed by duration. Only 15- and 30-day commitments are allowed.
 
-const PLEDGE_AMOUNT     = 5_000;  // whole HIGHER tokens
-const PLEDGE_TIER_INDEX = 1n;     // contract PLEDGE_TIERS[1] = 5k HIGHER
+const COMMITMENT_TIERS: Record<number, { amount: number; tierIndex: bigint; tierName: string }> = {
+  15: { amount:  5_000, tierIndex: 1n, tierName: 'Standard' },
+  30: { amount: 10_000, tierIndex: 2n, tierName: 'Serious'  },
+};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -159,6 +160,7 @@ async function handleCommit(cast: CastWithInteractions, words: string[]): Promis
   }
 
   const { description, durationDays, requiredProofs } = parsed.data;
+  const tier = COMMITMENT_TIERS[durationDays];
 
   // Create DB record as pending_onchain — tokens not locked until user signs the tx
   const now     = new Date();
@@ -168,8 +170,8 @@ async function handleCommit(cast: CastWithInteractions, words: string[]): Promis
       fid,
       wallet_address:  walletAddress,
       template:        description,
-      pledge_tier:     'Standard',
-      pledge_amount:   PLEDGE_AMOUNT,
+      pledge_tier:     tier.tierName,
+      pledge_amount:   tier.amount,
       start_time:      now,
       end_time:        endDate,
       required_proofs: requiredProofs,
@@ -181,13 +183,13 @@ async function handleCommit(cast: CastWithInteractions, words: string[]): Promis
 
   const contractAddress = process.env.CONTRACT_ADDRESS ?? '(contract not configured)';
   const tokenAddress    = process.env.HIGHER_TOKEN_ADDRESS ?? '(token not configured)';
-  const amountWei       = BigInt(PLEDGE_AMOUNT) * BigInt(10 ** 18);
+  const amountWei       = BigInt(tier.amount) * BigInt(10 ** 18);
 
   const txData = (() => {
     try {
       return createCommitmentTxData(
         BigInt(fid),
-        PLEDGE_TIER_INDEX,
+        tier.tierIndex,
         BigInt(durationDays),
         BigInt(requiredProofs),
       );
@@ -207,7 +209,7 @@ async function handleCommit(cast: CastWithInteractions, words: string[]): Promis
         description,
         durationDays,
         requiredProofs,
-        amount:        PLEDGE_AMOUNT,
+        amount:        tier.amount,
         firstDeadline: deadlineStr,
       }),
       ``,

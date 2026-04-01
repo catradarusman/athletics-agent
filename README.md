@@ -4,7 +4,7 @@ Farcaster bot for [/higher-athletics](https://warpcast.com/~/channel/higher-athl
 
 **Flow:**
 1. User calls `@higherathletics commit [natural language goal]` → Claude parses the goal, bot records intent in DB as `pending_onchain`, and returns the encoded contract calldata + signing instructions
-2. User approves the pool contract to spend 5,000 $HIGHER, then calls `createCommitment()` on the contract to lock their pledge onchain
+2. User approves the pool contract to spend 5,000 or 10,000 $HIGHER (depending on tier), then calls `createCommitment()` on the contract to lock their pledge onchain
 3. User posts workout casts in `/higher-athletics` → agent validates each with Claude AI and records proofs in DB + onchain
 4. After the commitment window closes, the resolution cron settles the commitment onchain (hourly)
 5. **Pass:** user calls `claim()` on the contract to receive pledge − 10% fee + bonus from the prize pool
@@ -227,21 +227,28 @@ In `/higher-athletics`, mention `@higherathletics`:
 **Committing:** describe your goal in plain language — Claude parses it into duration + proof frequency.
 
 ```
-@higherathletics commit cycling every day for 2 weeks
-@higherathletics commit run 5k three times a week for a month
-@higherathletics commit walk 30 mins daily for 3 weeks
-@higherathletics commit 3x/week gym for 4 weeks
-@higherathletics commit run 10k total in 7 days
+@higherathletics commit cycling every day for 15 days
+@higherathletics commit run 5k three times a week for 30 days
+@higherathletics commit walk 30 mins daily for 15 days
+@higherathletics commit 3x/week gym for 30 days
+@higherathletics commit run 10k total in 15 days
 ```
 
 Any exercise counts: running, cycling, walking, swimming, gym, yoga, and more. The bot validates the activity type against each proof you submit.
 
-**Pledge:** fixed at **5,000 $HIGHER** for all commitments. No tier selection.
+**Pledge tiers — two options, no other durations accepted:**
 
-**Commitment window:** 7–60 days. Proof frequency: at least 1 per week, at most 1 per day.
+| Duration | Pledge | Tier |
+|---|---|---|
+| 15 days | 5,000 $HIGHER | Standard |
+| 30 days | 10,000 $HIGHER | Serious |
+
+If no duration is specified, the bot defaults to 30 days. Any other duration is rejected.
+
+**Proof frequency:** at least 1 per week, at most 1 per day.
 
 **Locking the pledge (two steps after the bot replies):**
-1. Approve the pool contract to spend 5,000 $HIGHER on the $HIGHER token contract (`HIGHER_TOKEN_ADDRESS`)
+1. Approve the pool contract to spend the pledge amount on the $HIGHER token contract (`HIGHER_TOKEN_ADDRESS`)
 2. Submit the `createCommitment()` calldata shown in the bot's reply to the pool contract address
 
 The pledge is only locked once this on-chain transaction confirms.
