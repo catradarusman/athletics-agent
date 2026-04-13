@@ -607,12 +607,14 @@ webhookRouter.post('/webhook', async (req: Request, res: Response) => {
       const botIdx = words.findIndex(w => w.toLowerCase().startsWith(`@${BOT_USERNAME}`));
       const commandWord = botIdx >= 0 ? (words[botIdx + 1] ?? '').toLowerCase() : '';
 
-      if (commandWord === 'status') {
+      if (commandWord === 'commit') {
+        await handleCommit(cast, words);
+      } else if (commandWord === 'status') {
         await handleStatus(cast);
       } else if (commandWord === 'proof') {
         await handleProof(cast);
       } else {
-        console.log(`[webhook] ignoring command "${commandWord}" — only status and proof replies enabled`);
+        console.log(`[webhook] ignoring command "${commandWord}" — only commit, status, and proof replies enabled`);
       }
       return;
     }
