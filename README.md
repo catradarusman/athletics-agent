@@ -5,7 +5,7 @@ Farcaster bot for [/higher-athletics](https://warpcast.com/~/channel/higher-athl
 **Flow:**
 1. User calls `@higherathletics commit [natural language goal]` → Claude parses the goal, bot records intent in DB as `pending_onchain`, and returns the encoded contract calldata + signing instructions
 2. User approves the pool contract to spend 5,000 or 10,000 $HIGHER (depending on tier), then calls `createCommitment()` on the contract to lock their pledge onchain
-3. User posts workout casts in `/higher-athletics` → agent validates each with Claude AI and records proofs in DB + onchain
+3. User submits proof by mentioning `@higherathletics proof [evidence]` with text and/or an attached photo → agent validates with Claude (including vision analysis of images) and records proofs in DB + onchain
 4. After the commitment window closes, the resolution cron settles the commitment onchain (hourly)
 5. **Pass:** user calls `claim()` on the contract to receive pledge − 10% fee + bonus from the prize pool
 6. **Fail:** pledge is forfeited to the prize pool; the bot notifies in the channel
@@ -215,16 +215,17 @@ After rotating: update `AGENT_PRIVATE_KEY` in your environment and restart the a
 
 ## Bot commands
 
-In `/higher-athletics`, mention `@higherathletics`:
+The bot only responds to three explicit commands in `/higher-athletics`. All other mentions, general casts, and conversation are silently ignored.
 
 ```
 @higherathletics commit [your goal]
+@higherathletics proof [evidence]
 @higherathletics status
-@higherathletics pool
-@higherathletics leaderboard
 ```
 
-**Committing:** describe your goal in plain language — Claude parses it into duration + proof frequency.
+**`commit` — create a commitment**
+
+Describe your goal in plain language — Claude parses it into duration + proof frequency.
 
 ```
 @higherathletics commit cycling every day for 15 days
@@ -234,7 +235,7 @@ In `/higher-athletics`, mention `@higherathletics`:
 @higherathletics commit run 10k total in 15 days
 ```
 
-Any exercise counts: running, cycling, walking, swimming, gym, yoga, and more. The bot validates the activity type against each proof you submit.
+Any exercise counts: running, cycling, walking, swimming, gym, yoga, and more.
 
 **Pledge tiers — two options, no other durations accepted:**
 
@@ -253,21 +254,43 @@ If no duration is specified, the bot defaults to 30 days. Any other duration is 
 
 The pledge is only locked once this on-chain transaction confirms.
 
-Any cast in the channel (without a bot mention) is treated as a proof submission and validated automatically.
+---
 
-**Conversational replies:** any `@higherathletics` mention where the first word after the mention is not a recognized command (`commit`, `status`, `pool`, `leaderboard`) triggers a short AI-generated reply from Claude. This covers natural language questions like "what can you do?", "how do I pledge?", "why should I use this?" and threaded replies to bot casts. The bot answers questions about how it works, clarifies commitment status, and explains proof requirements — but never motivates, encourages, or gives financial advice. Replies are capped at 300 characters (one cast). A per-user 60-second cooldown prevents reply loops; hitting the cooldown returns a brief notice instead of silently dropping the message.
+**`proof` — submit a proof of workout**
+
+Mention the bot with `proof` followed by your evidence. Attach a photo or include specific details.
+
+```
+@higherathletics proof ran 5.2km in 31:45 this morning [attach Strava screenshot]
+@higherathletics proof 45 min gym session, 3x10 squats at 80kg [attach photo]
+@higherathletics proof morning ride 32km avg 28kph [attach Garmin screenshot]
+```
+
+The bot passes all attached images directly to Claude vision for analysis — it can read Strava stats, Garmin metrics, route maps, and workout photos. Accepted evidence: photos, tracking app screenshots (Strava, Garmin, Nike Run Club, Wahoo), or specific text descriptions with distance, time, reps, or duration. Generic statements without specifics or images are rejected.
+
+The bot replies with the current proof count (`✓ 2/12. 18 days left`) or an invalid notice if the proof doesn't pass.
+
+---
+
+**`status` — check your progress**
+
+```
+@higherathletics status
+```
+
+Returns your current proof count, days remaining, pledge amount, and pace (on track or behind).
 
 ---
 
 ## Cron jobs
 
-Three jobs run automatically once the server is started:
+One job runs automatically once the server is started:
 
 | Job | Schedule | Purpose |
 |---|---|---|
-| Reminder | Every 6 hours | Pings users who are behind on proofs or inside the 48-hour final window |
 | Resolution | Every hour | Settles expired commitments onchain; updates DB only after tx confirms |
-| Weekly pool update | Mondays 12:00 UTC | Posts pool balance + weekly pass/fail stats to the channel |
+
+> The reminder (6h) and weekly pool update (Monday 12:00 UTC) crons are disabled to reduce channel noise. They can be re-enabled in `src/agent/cron.ts` → `registerCronJobs()`.
 
 The resolution cron also:
 - **Reconciles unrecorded proofs** before settling — retries any proofs that were accepted in DB but failed to record onchain, preventing DB/chain divergence from causing wrongful failures.
