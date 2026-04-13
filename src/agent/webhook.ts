@@ -78,14 +78,18 @@ function isReplyToBot(cast: CastWithInteractions): boolean {
   return BOT_FID !== 0 && cast.parent_author?.fid === BOT_FID;
 }
 
-function hasImage(cast: CastWithInteractions): boolean {
-  return cast.embeds?.some(e => {
-    const url = (e as { url?: string }).url ?? '';
-    return /\.(png|jpe?g|gif|webp)($|\?)/i.test(url) ||
-           url.includes('imagedelivery') ||
-           url.includes('i.imgur') ||
-           url.includes('cdn.warpcast');
-  }) ?? false;
+function getImageUrls(cast: CastWithInteractions): string[] {
+  return (cast.embeds ?? []).flatMap(e => {
+    const embed = e as { url?: string; metadata?: { content_type?: string | null } };
+    const url = embed.url ?? '';
+    if (!url) return [];
+    const ct = embed.metadata?.content_type ?? '';
+    if (ct.startsWith('image/')) return [url];
+    if (/\.(png|jpe?g|gif|webp)($|\?)/i.test(url)) return [url];
+    if (url.includes('imagedelivery') || url.includes('i.imgur') ||
+        url.includes('cdn.warpcast') || url.includes('res.cloudinary')) return [url];
+    return [];
+  });
 }
 
 function daysLeft(endTime: Date): number {
@@ -331,10 +335,11 @@ async function handleProof(cast: CastWithInteractions): Promise<void> {
     .filter(p => p.ai_valid && p.ai_summary)
     .map(p => p.ai_summary as string);
 
+  const imageUrls = getImageUrls(cast);
   const result = await validateProof(
     commitment,
     cast.text,
-    hasImage(cast),
+    imageUrls,
     previousSummaries,
   );
 
@@ -347,7 +352,7 @@ async function handleProof(cast: CastWithInteractions): Promise<void> {
         cast_hash:     cast.hash,
         fid,
         cast_text:     cast.text,
-        has_image:     hasImage(cast),
+        has_image:     imageUrls.length > 0,
         ai_valid:      null,
         ai_reason:     null,
         ai_summary:    null,
@@ -372,7 +377,7 @@ async function handleProof(cast: CastWithInteractions): Promise<void> {
       cast_hash:     cast.hash,
       fid,
       cast_text:     cast.text,
-      has_image:     hasImage(cast),
+      has_image:     imageUrls.length > 0,
       ai_valid:      true,
       ai_reason:     result.reason,
       ai_summary:    result.summary ?? null,
