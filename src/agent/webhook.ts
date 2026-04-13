@@ -409,8 +409,21 @@ async function handleProof(cast: CastWithInteractions): Promise<void> {
   const isComplete = remaining <= 0;
   const dl = daysLeft(commitment.end_time);
 
-  // Proof replies disabled — record silently, no channel reply
-  console.log(`[webhook] proof recorded silently fid=${cast.author.fid} count=${newCount}/${commitment.required_proofs} complete=${isComplete}`);
+  if (isComplete) {
+    await castReply(
+      cast.hash,
+      replies.commitmentPassed({
+        current: newCount,
+        total:   commitment.required_proofs,
+        payout:  Math.round(commitment.pledge_amount * 0.9),
+      }),
+    );
+  } else {
+    await castReply(
+      cast.hash,
+      replies.proofValid({ current: newCount, total: commitment.required_proofs, daysLeft: dl }),
+    );
+  }
 }
 
 async function handleConversation(cast: CastWithInteractions): Promise<void> {
@@ -591,16 +604,15 @@ webhookRouter.post('/webhook', async (req: Request, res: Response) => {
 
       if (commandWord === 'status') {
         await handleStatus(cast);
+      } else if (commandWord === 'proof') {
+        await handleProof(cast);
       } else {
-        console.log(`[webhook] ignoring command "${commandWord}" — only status replies enabled`);
+        console.log(`[webhook] ignoring command "${commandWord}" — only status and proof replies enabled`);
       }
       return;
     }
 
-    // Replies to bot and open conversation disabled
-
-    if (!isChannelCast(cast)) return;
-    await handleProof(cast);
+    // auto-proof and open conversation disabled
   } catch (err) {
     console.error('[webhook] handler error:', err);
   }
