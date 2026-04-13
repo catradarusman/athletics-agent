@@ -409,21 +409,8 @@ async function handleProof(cast: CastWithInteractions): Promise<void> {
   const isComplete = remaining <= 0;
   const dl = daysLeft(commitment.end_time);
 
-  if (isComplete) {
-    await castReply(
-      cast.hash,
-      replies.commitmentPassed({
-        current: newCount,
-        total:   commitment.required_proofs,
-        payout:  Math.round(commitment.pledge_amount * 0.9), // approximate — actual bonus depends on pool
-      }),
-    );
-  } else {
-    await castReply(
-      cast.hash,
-      replies.proofValid({ current: newCount, total: commitment.required_proofs, daysLeft: dl }),
-    );
-  }
+  // Proof replies disabled — record silently, no channel reply
+  console.log(`[webhook] proof recorded silently fid=${cast.author.fid} count=${newCount}/${commitment.required_proofs} complete=${isComplete}`);
 }
 
 async function handleConversation(cast: CastWithInteractions): Promise<void> {
@@ -602,24 +589,15 @@ webhookRouter.post('/webhook', async (req: Request, res: Response) => {
       const botIdx = words.findIndex(w => w.toLowerCase().startsWith(`@${BOT_USERNAME}`));
       const commandWord = botIdx >= 0 ? (words[botIdx + 1] ?? '').toLowerCase() : '';
 
-      if (commandWord === 'commit') {
-        await handleCommit(cast, words);
-      } else if (commandWord === 'status') {
+      if (commandWord === 'status') {
         await handleStatus(cast);
-      } else if (commandWord === 'pool') {
-        await handlePool(cast);
-      } else if (commandWord === 'leaderboard') {
-        await handleLeaderboard(cast);
       } else {
-        await handleConversation(cast);
+        console.log(`[webhook] ignoring command "${commandWord}" — only status replies enabled`);
       }
       return;
     }
 
-    if (isReplyToBot(cast) && isRelatedToChannel(cast)) {
-      await handleConversation(cast);
-      return;
-    }
+    // Replies to bot and open conversation disabled
 
     if (!isChannelCast(cast)) return;
     await handleProof(cast);

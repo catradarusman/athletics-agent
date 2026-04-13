@@ -282,14 +282,14 @@ async function runWeeklyPoolUpdate(): Promise<void> {
 // ─── Registration ─────────────────────────────────────────────────────────────
 
 export function registerCronJobs(): void {
-  // Reminder — every 6 hours
-  cron.schedule('0 */6 * * *', runReminderCron, { timezone: 'UTC' });
+  // Reminder — disabled (too noisy)
+  // cron.schedule('0 */6 * * *', runReminderCron, { timezone: 'UTC' });
 
   // Resolution — every hour
   cron.schedule('0 * * * *', runResolutionCron, { timezone: 'UTC' });
 
-  // Weekly pool update — Monday 12:00 UTC
-  cron.schedule('0 12 * * 1', runWeeklyPoolUpdate, { timezone: 'UTC' });
+  // Weekly pool update — disabled (too noisy)
+  // cron.schedule('0 12 * * 1', runWeeklyPoolUpdate, { timezone: 'UTC' });
 
-  console.log('[cron] registered: reminder (6h), resolution (1h), weekly (Mon 12:00 UTC)');
+  console.log('[cron] registered: resolution (1h)');
 }
