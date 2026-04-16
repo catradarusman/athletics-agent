@@ -347,6 +347,35 @@ export async function getLeaderboard(limit: number = 10): Promise<Array<{ fid: n
 }
 
 /**
+ * Return the count of active/pending commitments without loading full rows.
+ * Used by the snap API to display pool stats.
+ */
+export async function countActiveCommitments(): Promise<number> {
+  const result = await query<Record<string, unknown>>(
+    `SELECT COUNT(*) AS count FROM commitments WHERE status IN ('active', 'pending_onchain')`,
+    []
+  );
+  return parseInt((result.rows[0] as { count: string }).count, 10);
+}
+
+/**
+ * Return the most recent non-claimed commitment for a FID, regardless of status.
+ * Used by the snap API to surface passed/pending commitments for the claim flow.
+ */
+export async function getLatestCommitmentByFid(
+  fid: number
+): Promise<Commitment | null> {
+  const result = await query<Record<string, unknown>>(
+    `SELECT * FROM commitments
+     WHERE fid = $1 AND status IN ('active', 'pending_onchain', 'passed', 'failed')
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [fid]
+  );
+  return result.rows[0] ? toCommitment(result.rows[0]) : null;
+}
+
+/**
  * Return counts of commitments resolved as 'passed' or 'failed' since the
  * given cutoff date. Used by the weekly pool update cron.
  */

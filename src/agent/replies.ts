@@ -16,12 +16,16 @@ export function commitmentCreated(p: {
   requiredProofs: number;
   amount:         number;
   firstDeadline:  string;
+  snapUrl?:       string;
 }): string {
+  const snapLine = p.snapUrl
+    ? `lock pledge + track progress: ${p.snapUrl}`
+    : `sign the approve + createCommitment txs to lock your pledge`;
   return [
     `commitment queued. ${p.description}.`,
-    `${p.requiredProofs} proof${p.requiredProofs === 1 ? '' : 's'} over ${p.durationDays} days. pledge: ${fmt(p.amount)} $HIGHER (sign tx below to lock it in).`,
+    `${p.requiredProofs} proof${p.requiredProofs === 1 ? '' : 's'} over ${p.durationDays} days. pledge: ${fmt(p.amount)} $HIGHER.`,
     `first proof due by ${p.firstDeadline}.`,
-    `cast your work in /higher-athletics. i'm watching`,
+    snapLine,
   ].join('\n');
 }
 
@@ -76,8 +80,11 @@ export function commitmentPassed(p: {
   total:        number;
   payout:       number;
   claimDetails?: string;
+  snapUrl?:      string;
 }): string {
-  const claim = p.claimDetails ?? 'call claim() on the contract';
+  const claim = p.snapUrl
+    ? `claim via snap: ${p.snapUrl}`
+    : (p.claimDetails ?? 'call claim() on the contract');
   return [
     `✓ ${p.current}/${p.total}. done.`,
     `${fmt(p.payout)} $HIGHER ready to claim.`,

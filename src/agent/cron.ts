@@ -23,6 +23,7 @@ import {
 import { backfillCommitmentId } from '../db/queries.js';
 
 const CHANNEL_ID = 'higher-athletics';
+const SNAP_URL = (process.env.SNAP_URL ?? '').trim() || undefined;
 
 // ─── Spam guard ───────────────────────────────────────────────────────────────
 // Track the last time we sent a reminder for each commitment (by DB id).
@@ -225,9 +226,10 @@ async function runResolutionCron(): Promise<void> {
       let text: string;
       if (passed) {
         text = `@${username} ${replies.commitmentPassed({
-          current: c.verified_proofs,
-          total:   c.required_proofs,
-          payout:  Math.round(c.pledge_amount * 0.9),
+          current:  c.verified_proofs,
+          total:    c.required_proofs,
+          payout:   Math.round(c.pledge_amount * 0.9),
+          snapUrl:  SNAP_URL,
         })}`;
       } else {
         text = `@${username} ${replies.commitmentFailed({

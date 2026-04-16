@@ -21,7 +21,6 @@ import {
 import {
   recordProofOnchain,
   getPoolBalance,
-  createCommitmentTxData,
   getFidHasActive,
   getFidActiveId,
   getPublicClient,
@@ -33,6 +32,7 @@ const CHANNEL_ID = 'higher-athletics';
 const BOT_USERNAME = (process.env.BOT_USERNAME ?? 'higherathletics').toLowerCase();
 const BOT_FID = Number(process.env.BOT_FID ?? 0);
 const MIN_NEYNAR_USER_SCORE = Number(process.env.MIN_NEYNAR_USER_SCORE ?? 0.5);
+const SNAP_URL = (process.env.SNAP_URL ?? '').trim() || undefined;
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 5 });
 
@@ -185,44 +185,20 @@ async function handleCommit(cast: CastWithInteractions, words: string[]): Promis
     console.error('[webhook] failed to create DB commitment for fid', fid, err);
   }
 
-  const contractAddress = process.env.CONTRACT_ADDRESS ?? '(contract not configured)';
-  const tokenAddress    = process.env.HIGHER_TOKEN_ADDRESS ?? '(token not configured)';
-  const amountWei       = BigInt(tier.amount) * BigInt(10 ** 18);
-
-  const txData = (() => {
-    try {
-      return createCommitmentTxData(
-        BigInt(fid),
-        tier.tierIndex,
-        BigInt(durationDays),
-        BigInt(requiredProofs),
-      );
-    } catch {
-      return null;
-    }
-  })();
-
   // First deadline = end of first week
   const firstDeadline = new Date(now.getTime() + 7 * 86_400_000);
   const deadlineStr   = `${firstDeadline.toISOString().split('T')[0]} UTC`;
 
   await castReply(
     cast.hash,
-    [
-      replies.commitmentCreated({
-        description,
-        durationDays,
-        requiredProofs,
-        amount:        tier.amount,
-        firstDeadline: deadlineStr,
-      }),
-      ``,
-      `to lock your pledge onchain (two steps):`,
-      `1. approve $HIGHER: call approve(${contractAddress}, ${amountWei}) on ${tokenAddress}`,
-      `2. call createCommitment on ${contractAddress}:`,
-      ...(txData ? [`   ${txData.data}`] : [`   (contract not configured)`]),
-      `pledge is only locked once this tx confirms`,
-    ].join('\n'),
+    replies.commitmentCreated({
+      description,
+      durationDays,
+      requiredProofs,
+      amount:        tier.amount,
+      firstDeadline: deadlineStr,
+      snapUrl:       SNAP_URL,
+    }),
   );
 }
 
@@ -240,16 +216,20 @@ async function handleStatus(cast: CastWithInteractions): Promise<void> {
     ? (commitment.verified_proofs / commitment.required_proofs) >= ((Date.now() - commitment.start_time.getTime()) / (commitment.end_time.getTime() - commitment.start_time.getTime())) * 0.8
     : true;
 
-  await castReply(
-    cast.hash,
-    replies.status({
-      current:  commitment.verified_proofs,
-      total:    commitment.required_proofs,
-      daysLeft: dl,
-      amount:   commitment.pledge_amount,
-      onTrack,
-    }),
-  );
+  const statusReply = replies.status({
+    current:  commitment.verified_proofs,
+    total:    commitment.required_proofs,
+    daysLeft: dl,
+    amount:   commitment.pledge_amount,
+    onTrack,
+  });
+
+  // Append snap URL if configured and there's room in the 320-char limit
+  const withSnap = SNAP_URL && (statusReply.length + SNAP_URL.length + 2) <= 320
+    ? `${statusReply}\n${SNAP_URL}`
+    : statusReply;
+
+  await castReply(cast.hash, withSnap);
 }
 
 async function handlePool(cast: CastWithInteractions): Promise<void> {
@@ -418,9 +398,10 @@ async function handleProof(cast: CastWithInteractions): Promise<void> {
     await castReply(
       cast.hash,
       replies.commitmentPassed({
-        current: newCount,
-        total:   commitment.required_proofs,
-        payout:  Math.round(commitment.pledge_amount * 0.9),
+        current:  newCount,
+        total:    commitment.required_proofs,
+        payout:   Math.round(commitment.pledge_amount * 0.9),
+        snapUrl:  SNAP_URL,
       }),
     );
   } else {
