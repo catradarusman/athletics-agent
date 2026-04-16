@@ -3,12 +3,36 @@
 Farcaster bot for [/higher-athletics](https://warpcast.com/~/channel/higher-athletics). Users pledge $HIGHER tokens against fitness commitments. The agent validates proof-of-work casts with Claude, records them onchain, and settles commitments automatically.
 
 **Flow:**
-1. User calls `@higherathletics commit [natural language goal]` → Claude parses the goal, bot records intent in DB as `pending_onchain`, and returns the encoded contract calldata + signing instructions
-2. User approves the pool contract to spend 5,000 or 10,000 $HIGHER (depending on tier), then calls `createCommitment()` on the contract to lock their pledge onchain
+1. User calls `@higherathletics commit [natural language goal]` → Claude parses the goal, bot records intent in DB as `pending_onchain`, and replies with a snap link
+2. User taps the snap link → reviews their parsed commitment → taps "lock pledge" → the **Farcaster Snap** opens a signing mini app that handles `approve($HIGHER)` + `createCommitment()` in two wallet prompts
 3. User submits proof by mentioning `@higherathletics proof [evidence]` with text and/or an attached photo → agent validates with Claude (including vision analysis of images) and records proofs in DB + onchain
 4. After the commitment window closes, the resolution cron settles the commitment onchain (hourly)
-5. **Pass:** user calls `claim()` on the contract to receive pledge − 10% fee + bonus from the prize pool
+5. **Pass:** bot notifies with a snap link → user taps "claim reward" → signing mini app calls `claim()` → pledge − 10% fee + pool bonus lands in their wallet
 6. **Fail:** pledge is forfeited to the prize pool; the bot notifies in the channel
+
+The **Farcaster Snap** (`packages/snap/`) is a companion Hono app deployed to `https://higher-athletics-snap.host.neynar.app`. It provides the in-feed UI for goal setup, progress tracking, and transaction signing. See [Snap deployment](#7-snap-deployment) for setup.
+
+---
+
+## Repository structure
+
+```
+athletics-agent/
+  src/                    ← bot server (Express + Neynar webhooks)
+    agent/                ← webhook handler, cron jobs, reply templates
+    chain/                ← viem client, contract reads/writes, calldata encoders
+    db/                   ← PostgreSQL queries (commitments, proofs, pool_events)
+  contracts/              ← HigherCommitmentPool.sol (Hardhat project)
+  scripts/                ← deploy, seed-pool, update-agent
+  packages/
+    snap/                 ← Farcaster Snap (Hono, deployed to host.neynar.app)
+      src/
+        index.ts          ← snap handler + landing/setup/review/status pages
+        signing/pages.ts  ← HTML mini apps for approve+commit and claim txs
+        chain.ts          ← direct RPC reads for the snap
+        ai.ts             ← Claude Haiku goal parser
+        api.ts            ← HTTP client to bot API
+```
 
 ---
 
@@ -46,6 +70,17 @@ The server listens on `PORT` (default 3000) and exposes:
 
 - `POST /webhook` — Neynar cast webhook
 - `GET /health` — health check
+- `GET /api/commitment/:fid` — snap API: returns latest commitment state for a FID
+- `POST /api/commitment/register` — snap API: creates `pending_onchain` record after wallet connects
+- `GET /api/pool` — snap API: returns active commitment count
+
+To run the snap locally:
+
+```bash
+cd packages/snap
+pnpm install
+pnpm dev   # starts on port 3003 with JFS verification disabled
+```
 
 ---
 
@@ -107,6 +142,68 @@ The server accepts requests signed by either secret, so both webhooks share the 
 **Signature verification:** every `POST /webhook` is verified with HMAC-SHA512 over the raw request body (`x-neynar-signature` header) against `WEBHOOK_SECRET` and `WEBHOOK_SECRET_2`. Requests without a valid signature are rejected with HTTP 401. In production, the server refuses to start without `WEBHOOK_SECRET`. In development, a warning is logged but requests are accepted.
 
 The bot ignores `@mentions` outside `/higher-athletics`. Channel scoping is enforced in code via `channel.id`, `root_parent_url`, and `parent_url` checks.
+
+---
+
+## 7. Snap deployment
+
+The snap is a separate Hono app in `packages/snap/` deployed to [host.neynar.app](https://host.neynar.app).
+
+**First deploy:**
+
+```bash
+# 1. Build the archive (exclude local dev server and node_modules)
+cd packages/snap
+tar czf /tmp/higher-athletics-snap.tar.gz \
+  --exclude='./src/server.ts' \
+  --exclude='./node_modules' \
+  .
+
+# 2. Deploy (saves apiKey in the response — store it for future redeploys)
+curl -X POST https://api.host.neynar.app/v1/deploy \
+  -F "files=@/tmp/higher-athletics-snap.tar.gz" \
+  -F "projectName=higher-athletics-snap" \
+  -F "framework=hono" \
+  -F 'env={
+    "SNAP_PUBLIC_BASE_URL":"https://higher-athletics-snap.host.neynar.app",
+    "BOT_API_URL":"<your-railway-url>",
+    "SNAP_API_SECRET":"<shared-secret>",
+    "CONTRACT_ADDRESS":"<pool-contract-address>",
+    "HIGHER_TOKEN_ADDRESS":"0x0578d8A44db98B23BF096A382e016e29a5Ce0ffe",
+    "BASE_RPC_URL":"<your-rpc-url>",
+    "ANTHROPIC_API_KEY":"<your-key>",
+    "CHAIN_ID":"8453"
+  }'
+```
+
+**Redeploy** (after receiving your `apiKey` from the first deploy):
+
+```bash
+curl -X POST https://api.host.neynar.app/v1/deploy \
+  -H "Authorization: Bearer <apiKey>" \
+  -F "files=@/tmp/higher-athletics-snap.tar.gz" \
+  -F "projectName=higher-athletics-snap" \
+  -F "framework=hono" \
+  -F 'env={...}'
+```
+
+**Verify the snap is live:**
+
+```bash
+curl -s -H "Accept: application/vnd.farcaster.snap+json" \
+  https://higher-athletics-snap.host.neynar.app/
+```
+
+Should return `{"version":"2.0","theme":{"accent":"green"},...}`.
+
+**Wire up the bot** — add these two variables to Railway after deploying the snap:
+
+| Variable | Value |
+|---|---|
+| `SNAP_URL` | `https://higher-athletics-snap.host.neynar.app` |
+| `SNAP_API_SECRET` | same secret used in snap env above |
+
+Once set, the bot's commit and claim replies will include the snap link.
 
 ---
 
@@ -206,6 +303,8 @@ After rotating: update `AGENT_PRIVATE_KEY` in your environment and restart the a
 | `NODE_ENV` | no | `production` disables dev tooling |
 | `CHAIN_ID` | no | `84532` to use Base Sepolia; defaults to Base mainnet |
 | `MIN_NEYNAR_USER_SCORE` | no | Minimum Neynar user score to create commitments (default: 0.5). Sybil protection. |
+| `SNAP_URL` | no | Snap URL appended to commit/claim replies. Set to `https://higher-athletics-snap.host.neynar.app` |
+| `SNAP_API_SECRET` | no | Shared secret for snap → bot API auth (`x-snap-secret` header). Required if snap is deployed. |
 | `DEPLOYER_PRIVATE_KEY` | deploy only | Deployer wallet for deploy/seed/update-agent scripts |
 | `FEE_RECIPIENT` | deploy only | Address for 10% protocol fees; defaults to deployer |
 | `AGENT_ADDRESS` | deploy only | Agent wallet address for `deploy.ts`; derived from `AGENT_PRIVATE_KEY` if unset |
@@ -248,11 +347,11 @@ If no duration is specified, the bot defaults to 30 days. Any other duration is 
 
 **Proof frequency:** at least 1 per week, at most 1 per day.
 
-**Locking the pledge (two steps after the bot replies):**
-1. Approve the pool contract to spend the pledge amount on the $HIGHER token contract (`HIGHER_TOKEN_ADDRESS`)
-2. Submit the `createCommitment()` calldata shown in the bot's reply to the pool contract address
+**Locking the pledge — via the snap (recommended):**
 
-The pledge is only locked once this on-chain transaction confirms.
+The bot reply includes a snap link. Tap it in Farcaster → review your commitment → tap "lock pledge". The snap opens a signing page that walks through `approve($HIGHER)` and `createCommitment()` with two wallet prompts. No manual calldata handling needed.
+
+The pledge is only locked once both on-chain transactions confirm.
 
 ---
 
