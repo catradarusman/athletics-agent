@@ -10,7 +10,7 @@ Farcaster bot for [/higher-athletics](https://warpcast.com/~/channel/higher-athl
 5. **Pass:** bot notifies with a snap link → user taps "claim reward" → signing mini app calls `claim()` → pledge − 10% fee + pool bonus lands in their wallet
 6. **Fail:** pledge is forfeited to the prize pool; the bot notifies in the channel
 
-The **Farcaster Snap** (`packages/snap/`) is a companion Hono app deployed to `https://higher-athletics-snap.host.neynar.app`. It provides the in-feed UI for goal setup, progress tracking, and transaction signing. See [Snap deployment](#7-snap-deployment) for setup.
+The **Farcaster Snap** (`packages/snap/`) is a companion Hono app deployed to `https://higherathletics-snap.host.neynar.app`. It provides the in-feed UI for goal setup, progress tracking, and transaction signing. See [Snap deployment](#7-snap-deployment) for setup.
 
 ---
 
@@ -165,10 +165,10 @@ curl -X POST https://api.host.neynar.app/v1/deploy \
   -F "projectName=higher-athletics-snap" \
   -F "framework=hono" \
   -F 'env={
-    "SNAP_PUBLIC_BASE_URL":"https://higher-athletics-snap.host.neynar.app",
+    "SNAP_PUBLIC_BASE_URL":"https://higherathletics-snap.host.neynar.app",
     "BOT_API_URL":"<your-railway-url>",
     "SNAP_API_SECRET":"<shared-secret>",
-    "CONTRACT_ADDRESS":"<pool-contract-address>",
+    "CONTRACT_ADDRESS":"0x1f617029fa78e80dc5be42fdc563a8b39ace1afd",
     "HIGHER_TOKEN_ADDRESS":"0x0578d8A44db98B23BF096A382e016e29a5Ce0ffe",
     "BASE_RPC_URL":"<your-rpc-url>",
     "ANTHROPIC_API_KEY":"<your-key>",
@@ -191,7 +191,7 @@ curl -X POST https://api.host.neynar.app/v1/deploy \
 
 ```bash
 curl -s -H "Accept: application/vnd.farcaster.snap+json" \
-  https://higher-athletics-snap.host.neynar.app/
+  https://higherathletics-snap.host.neynar.app/
 ```
 
 Should return `{"version":"2.0","theme":{"accent":"green"},...}`.
@@ -200,7 +200,7 @@ Should return `{"version":"2.0","theme":{"accent":"green"},...}`.
 
 | Variable | Value |
 |---|---|
-| `SNAP_URL` | `https://higher-athletics-snap.host.neynar.app` |
+| `SNAP_URL` | `https://higherathletics-snap.host.neynar.app` |
 | `SNAP_API_SECRET` | same secret used in snap env above |
 
 Once set, the bot's commit and claim replies will include the snap link.
@@ -208,6 +208,15 @@ Once set, the bot's commit and claim replies will include the snap link.
 ---
 
 ## 4. Deploy the smart contract
+
+**Mainnet deployment (2026-04-20):**
+
+| | |
+|---|---|
+| Contract | [`0x1f617029fa78e80dc5be42fdc563a8b39ace1afd`](https://basescan.org/address/0x1f617029fa78e80dc5be42fdc563a8b39ace1afd#code) |
+| Network | Base mainnet (chain ID 8453) |
+| Prize pool | 100,000 $HIGHER (seeded at deploy) |
+| Snap | [`higherathletics-snap.host.neynar.app`](https://higherathletics-snap.host.neynar.app) |
 
 The contract is `HigherCommitmentPool.sol`. Constructor arguments:
 
@@ -240,9 +249,11 @@ The deployer wallet must hold at least 100 000 $HIGHER before running this. The 
 **Verify on Basescan (optional but recommended):**
 
 ```bash
-npm run hardhat -- verify --network base <CONTRACT_ADDRESS> \
+npx hardhat verify --network base <CONTRACT_ADDRESS> \
   <HIGHER_TOKEN_ADDRESS> <FEE_RECIPIENT_ADDRESS> <AGENT_ADDRESS>
 ```
+
+> **Note:** `hardhat.config.js` uses a single `apiKey` string for `etherscan` (Etherscan V2 format). Per-network key maps are no longer accepted.
 
 ---
 
@@ -303,7 +314,7 @@ After rotating: update `AGENT_PRIVATE_KEY` in your environment and restart the a
 | `NODE_ENV` | no | `production` disables dev tooling |
 | `CHAIN_ID` | no | `84532` to use Base Sepolia; defaults to Base mainnet |
 | `MIN_NEYNAR_USER_SCORE` | no | Minimum Neynar user score to create commitments (default: 0.5). Sybil protection. |
-| `SNAP_URL` | no | Snap URL appended to commit/claim replies. Set to `https://higher-athletics-snap.host.neynar.app` |
+| `SNAP_URL` | no | Snap URL appended to commit/claim replies. Set to `https://higherathletics-snap.host.neynar.app` |
 | `SNAP_API_SECRET` | no | Shared secret for snap → bot API auth (`x-snap-secret` header). Required if snap is deployed. |
 | `DEPLOYER_PRIVATE_KEY` | deploy only | Deployer wallet for deploy/seed/update-agent scripts |
 | `FEE_RECIPIENT` | deploy only | Address for 10% protocol fees; defaults to deployer |

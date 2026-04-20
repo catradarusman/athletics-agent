@@ -4,6 +4,21 @@ All notable changes to the Higher Athletics bot are documented here.
 
 ---
 
+## [2026-04-20] — Mainnet deployment
+
+### Deployed
+- **`HigherCommitmentPool`** deployed to Base mainnet at `0x1f617029fa78e80dc5be42fdc563a8b39ace1afd`
+  - Prize pool seeded with 100,000 $HIGHER
+  - `AGENT_ROLE` granted to `0x0Cb57e00757A09d4C4289A4b2E4A70C7Ce56903A`
+  - Contract verified on [Basescan](https://basescan.org/address/0x1f617029fa78e80dc5be42fdc563a8b39ace1afd#code)
+- **Snap redeployed** to `https://higherathletics-snap.host.neynar.app` (project `higherathletics-snap`) with updated `CONTRACT_ADDRESS` and new `SNAP_API_SECRET`
+
+### Changed
+- **`hardhat.config.js`** — migrated `etherscan.apiKey` from per-network map to single string (Etherscan V2 API requirement)
+- **`.env`** — `CONTRACT_ADDRESS` updated to mainnet address; `SNAP_URL` and `SNAP_API_SECRET` added
+
+---
+
 ## [2026-04-16] — Farcaster Snap integration
 
 ### Added
