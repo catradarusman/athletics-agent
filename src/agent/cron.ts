@@ -242,7 +242,7 @@ async function runResolutionCron(): Promise<void> {
       }
 
       await castInChannel(text, CHANNEL_ID, SNAP_URL && passed ? [SNAP_URL] : undefined);
-      console.log(`[cron:resolution] notified fid=${c.fid} status=${status}`);
+      console.log(`[cron:resolution] notified fid=${c.fid} outcome=${passed ? 'passed' : 'failed'}`);
 
       // Clean up retry counter on success
       resolutionRetries.delete(c.id);
