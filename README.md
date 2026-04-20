@@ -3,7 +3,7 @@
 Farcaster bot for [/higher-athletics](https://warpcast.com/~/channel/higher-athletics). Users pledge $HIGHER tokens against fitness commitments. The agent validates proof-of-work casts with Claude, records them onchain, and settles commitments automatically.
 
 **Flow:**
-1. User calls `@higherathletics commit [natural language goal]` → Claude parses the goal, bot records intent in DB as `pending_onchain`, and replies with a snap link
+1. User calls `@higherathletics commit [natural language goal]` → Claude parses the goal, bot records intent in DB as `created`, and replies with a snap link
 2. User taps the snap link → reviews their parsed commitment → taps "lock pledge" → the **Farcaster Snap** opens a signing mini app that handles `approve($HIGHER)` + `createCommitment()` in two wallet prompts
 3. User submits proof by mentioning `@higherathletics proof [evidence]` with text and/or an attached photo → agent validates with Claude (including vision analysis of images) and records proofs in DB + onchain
 4. After the commitment window closes, the resolution cron settles the commitment onchain (hourly)
@@ -71,7 +71,7 @@ The server listens on `PORT` (default 3000) and exposes:
 - `POST /webhook` — Neynar cast webhook
 - `GET /health` — health check
 - `GET /api/commitment/:fid` — snap API: returns latest commitment state for a FID
-- `POST /api/commitment/register` — snap API: creates `pending_onchain` record after wallet connects
+- `POST /api/commitment/register` — snap API: creates `created` record after wallet connects; transitions to `paid` when the pledge tx confirms onchain
 - `GET /api/pool` — snap API: returns active commitment count
 
 To run the snap locally:
@@ -389,6 +389,21 @@ The bot replies with the current proof count (`✓ 2/12. 18 days left`) or an in
 ```
 
 Returns your current proof count, days remaining, pledge amount, and pace (on track or behind).
+
+---
+
+## Commitment status model
+
+Each commitment moves through four statuses:
+
+| Status | Meaning |
+|--------|---------|
+| `created` | User announced intent (`@higherathletics commit …`). DB record exists but pledge is not locked — no onchain tx yet. `start_time`/`end_time` are placeholders. |
+| `paid` | User signed `approve` + `createCommitment` and both txs confirmed. `start_time` and `end_time` are updated from `block.timestamp` — the countdown starts here. |
+| `end` | Commitment period has closed and was settled onchain by the resolution cron. The `outcome` column stores `'passed'` (proofs met) or `'failed'` (pledge forfeited to pool). |
+| `claimed` | User called `claim()` onchain and received their payout. |
+
+The `outcome` column (`passed` / `failed` / `null`) is set when status transitions to `end`. It preserves the pass/fail distinction while keeping the status surface clean.
 
 ---
 

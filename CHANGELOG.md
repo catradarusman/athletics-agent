@@ -4,6 +4,38 @@ All notable changes to the Higher Athletics bot are documented here.
 
 ---
 
+## [2026-04-20] — Status model overhaul + end_time fix
+
+### Fixed
+- **`end_time` now calculated from pledge settlement, not intent date.** Previously `start_time`/`end_time` were set when the user posted `@higherathletics commit`, causing the countdown and resolution cron to run against the wrong window. Both are now updated from `block.timestamp` when the `createCommitment` tx confirms (backfill via `getCommitmentOnchain()`).
+- **Expired commitments no longer block new ones** even if the resolution cron hasn't run yet. `getActiveCommitmentByFid()` now excludes rows where `end_time` has passed.
+- **Direct replies to bot casts** (without `@higherathletics` in the text) are now processed. The previously dead `isReplyToBot()` helper is wired into the main handler.
+- **Snap link now embeds inline in Farcaster** instead of opening a new tab. The snap URL is passed in the Neynar `embeds` array rather than appended as plain text.
+
+### Changed
+- **Commitment statuses renamed** to a cleaner four-value model:
+  - `pending_onchain` → `created`
+  - `active` → `paid`
+  - `passed` / `failed` → `end` (pass/fail distinction preserved in new `outcome` column)
+  - `claimed` unchanged
+- **`outcome TEXT` column added** to `commitments` table (`passed` / `failed` / `null`). Set when status transitions to `end`.
+- **`backfillCommitmentId()`** now accepts `startTime`/`endTime` and updates both columns alongside `commitment_id` and status.
+- **`updateCommitmentStatus()`** signature changed: now takes `outcome: CommitmentOutcome` instead of `status`; always sets `status = 'end'`.
+- All queries updated to reference new status/outcome values.
+
+### Migration
+Run the following on the Railway Postgres instance before deploying:
+```sql
+UPDATE commitments SET status = 'created' WHERE status = 'pending_onchain';
+UPDATE commitments SET status = 'paid'    WHERE status = 'active';
+UPDATE commitments SET status = 'end'     WHERE status IN ('passed', 'failed');
+ALTER TABLE commitments ADD COLUMN IF NOT EXISTS outcome TEXT;
+UPDATE commitments SET outcome = 'passed' WHERE status = 'end' AND verified_proofs >= required_proofs;
+UPDATE commitments SET outcome = 'failed' WHERE status = 'end' AND verified_proofs < required_proofs;
+```
+
+---
+
 ## [2026-04-20] — Mainnet deployment
 
 ### Deployed
