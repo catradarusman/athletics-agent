@@ -299,21 +299,21 @@ async function handleReview(
   const inputs = (
     ctx.action as unknown as { inputs: Record<string, string> }
   ).inputs;
-  // Snap SDK omits unchanged defaultValues from inputs — fall back to stored
-  // parsed commitment (written by handleAuth when pre-filling the form).
+  // Load stored commitment once — used as fallback for both goal and duration
+  // when the snap SDK omits unchanged defaultValues from inputs.
+  const stored = await loadParsed(fid);
+
   let goalText = (inputs.goal ?? "").trim();
-  if (!goalText) {
-    const stored = await loadParsed(fid);
-    if (stored) goalText = stored.description;
-  }
-  const durChoice = inputs.duration ?? "30 days — 10k $HIGHER";
+  if (!goalText && stored) goalText = stored.description;
+
+  const durChoice = inputs.duration ?? "";
+  const durationDays: 15 | 30 = durChoice.startsWith("15") ? 15
+    : durChoice.startsWith("30") ? 30
+    : (stored?.durationDays === 15 ? 15 : 30);
 
   if (!goalText) {
     return buildSetupForm(b, null, "goal is required");
   }
-
-  // Determine duration from toggle_group selection
-  const durationDays: 15 | 30 = durChoice.startsWith("15") ? 15 : 30;
 
   // Parse the goal text (may take up to ~2s; snap has 5s limit)
   const goalWithDuration = `${goalText} for ${durationDays} days`;
