@@ -129,9 +129,9 @@ export async function getActiveCommitmentByFid(
 ): Promise<Commitment | null> {
   const result = await query<Record<string, unknown>>(
     `SELECT * FROM commitments
-     WHERE fid = $1 AND status IN ('active', 'pending_onchain')
+     WHERE fid = $1 AND status IN ('active', 'pending_onchain') AND end_time > $2
      LIMIT 1`,
-    [fid]
+    [fid, new Date()]
   );
   return result.rows[0] ? toCommitment(result.rows[0]) : null;
 }
