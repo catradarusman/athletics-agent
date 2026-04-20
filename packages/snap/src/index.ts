@@ -299,7 +299,13 @@ async function handleReview(
   const inputs = (
     ctx.action as unknown as { inputs: Record<string, string> }
   ).inputs;
-  const goalText = (inputs.goal ?? "").trim();
+  // Snap SDK omits unchanged defaultValues from inputs — fall back to stored
+  // parsed commitment (written by handleAuth when pre-filling the form).
+  let goalText = (inputs.goal ?? "").trim();
+  if (!goalText) {
+    const stored = await loadParsed(fid);
+    if (stored) goalText = stored.description;
+  }
   const durChoice = inputs.duration ?? "30 days — 10k $HIGHER";
 
   if (!goalText) {
