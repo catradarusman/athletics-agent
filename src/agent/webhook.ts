@@ -579,14 +579,15 @@ webhookRouter.post('/webhook', async (req: Request, res: Response) => {
   console.log(`[webhook] cast ${cast.hash} fid=${cast.author.fid} channel=${cast.channel?.id ?? 'none'} root=${cast.root_parent_url ?? 'none'} mentioned=${isBotMentioned(cast)} text="${text.slice(0, 80)}"`);
 
   try {
-    if (isBotMentioned(cast)) {
+    if (isBotMentioned(cast) || isReplyToBot(cast)) {
       if (!isRelatedToChannel(cast)) {
         console.log(`[webhook] ignoring mention outside higher-athletics`);
         return;
       }
 
       const botIdx = words.findIndex(w => w.toLowerCase().startsWith(`@${BOT_USERNAME}`));
-      const commandWord = botIdx >= 0 ? (words[botIdx + 1] ?? '').toLowerCase() : '';
+      // For @mentions: command is the word after @bot. For direct replies: first word is the command.
+      const commandWord = botIdx >= 0 ? (words[botIdx + 1] ?? '').toLowerCase() : (words[0] ?? '').toLowerCase();
 
       if (commandWord === 'commit') {
         await handleCommit(cast, words);
