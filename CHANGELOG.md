@@ -4,6 +4,16 @@ All notable changes to the Higher Athletics bot are documented here.
 
 ---
 
+## [2026-04-20] — Cancel commitment command
+
+### Added
+- **`cancel` command** — `@higherathletics cancel` cancels a commitment when status is `created` (pledge not yet locked). Blocked once status transitions to `paid` (tokens locked onchain — no contract-level withdrawal exists).
+- **`cancelled` status** added to `CommitmentStatus` type. Cancelled rows are excluded from active-commitment checks and the resolution cron automatically.
+- **`cancelCommitment(fid)`** DB function — atomic `UPDATE … WHERE status = 'created'`; returns null if the onchain tx confirmed in the window between the status check and the UPDATE (race condition handled).
+- Two new reply templates: `commitmentCancelled(description)` and `cannotCancelPaid()`.
+
+---
+
 ## [2026-04-20] — Status model overhaul + end_time fix
 
 ### Fixed

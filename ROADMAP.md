@@ -57,3 +57,4 @@ Development tracker for Higher Athletics. Items are ordered by priority within e
 - [x] Farcaster Snap — in-feed UX for approve+commit and claim transactions (2026-04-16)
 - [x] Mainnet deployment — contract deployed, pool seeded 100k $HIGHER, Basescan verified (2026-04-20)
 - [x] Snap redeployed — updated contract address and new SNAP_API_SECRET wired to Railway (2026-04-20)
+- [x] Cancel command — `@higherathletics cancel` cancels a `created` commitment before the pledge locks onchain (2026-04-20)

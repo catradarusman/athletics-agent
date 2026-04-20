@@ -151,3 +151,17 @@ export function noActiveCommitment(): string {
     `pledge: 5,000 $HIGHER. any exercise counts`,
   ].join('\n');
 }
+
+export function commitmentCancelled(description: string): string {
+  return [
+    `commitment cancelled: ${description}.`,
+    `pledge was never locked. you're free to start a new one`,
+  ].join('\n');
+}
+
+export function cannotCancelPaid(): string {
+  return [
+    `can't cancel. pledge is already locked onchain.`,
+    `complete your commitment or let it expire`,
+  ].join('\n');
+}

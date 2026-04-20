@@ -2,7 +2,7 @@ import { query, pool } from './index.js';
 
 // ─── Domain types ─────────────────────────────────────────────────────────────
 
-export type CommitmentStatus  = 'created' | 'paid' | 'end' | 'claimed';
+export type CommitmentStatus  = 'created' | 'paid' | 'end' | 'claimed' | 'cancelled';
 export type CommitmentOutcome = 'passed' | 'failed';
 export type PledgeTier       = 'Standard' | 'Serious';
 export type PoolEventType    = 'seed' | 'failure' | 'payout' | 'fee_withdrawal';
@@ -134,6 +134,17 @@ export async function getActiveCommitmentByFid(
      WHERE fid = $1 AND status IN ('created', 'paid') AND end_time > $2
      LIMIT 1`,
     [fid, new Date()]
+  );
+  return result.rows[0] ? toCommitment(result.rows[0]) : null;
+}
+
+export async function cancelCommitment(fid: number): Promise<Commitment | null> {
+  const result = await query<Record<string, unknown>>(
+    `UPDATE commitments
+     SET status = 'cancelled'
+     WHERE fid = $1 AND status = 'created'
+     RETURNING *`,
+    [fid]
   );
   return result.rows[0] ? toCommitment(result.rows[0]) : null;
 }

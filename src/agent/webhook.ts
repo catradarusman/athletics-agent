@@ -17,6 +17,7 @@ import {
   updateProofOnchainStatus,
   getLeaderboard,
   getAllActiveCommitments,
+  cancelCommitment,
 } from '../db/queries.js';
 import {
   recordProofOnchain,
@@ -227,6 +228,31 @@ async function handleStatus(cast: CastWithInteractions): Promise<void> {
   });
 
   await castReply(cast.hash, statusReply, SNAP_URL ? [SNAP_URL] : undefined);
+}
+
+async function handleCancel(cast: CastWithInteractions): Promise<void> {
+  const fid        = cast.author.fid;
+  const commitment = await getActiveCommitmentByFid(fid);
+
+  if (!commitment) {
+    await castReply(cast.hash, replies.noActiveCommitment());
+    return;
+  }
+
+  if (commitment.status === 'paid') {
+    await castReply(cast.hash, replies.cannotCancelPaid());
+    return;
+  }
+
+  // status === 'created' — attempt atomic cancel
+  const cancelled = await cancelCommitment(fid);
+  if (!cancelled) {
+    // Race condition: tx confirmed between check and UPDATE
+    await castReply(cast.hash, replies.cannotCancelPaid());
+    return;
+  }
+
+  await castReply(cast.hash, replies.commitmentCancelled(cancelled.template));
 }
 
 async function handlePool(cast: CastWithInteractions): Promise<void> {
@@ -594,8 +620,10 @@ webhookRouter.post('/webhook', async (req: Request, res: Response) => {
         await handleStatus(cast);
       } else if (commandWord === 'proof') {
         await handleProof(cast);
+      } else if (commandWord === 'cancel') {
+        await handleCancel(cast);
       } else {
-        console.log(`[webhook] ignoring command "${commandWord}" — only commit, status, and proof replies enabled`);
+        console.log(`[webhook] ignoring command "${commandWord}" — only commit, status, proof, and cancel replies enabled`);
       }
       return;
     }

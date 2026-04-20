@@ -325,12 +325,13 @@ After rotating: update `AGENT_PRIVATE_KEY` in your environment and restart the a
 
 ## Bot commands
 
-The bot only responds to three explicit commands in `/higher-athletics`. All other mentions, general casts, and conversation are silently ignored.
+The bot only responds to four explicit commands in `/higher-athletics`. All other mentions, general casts, and conversation are silently ignored.
 
 ```
 @higherathletics commit [your goal]
 @higherathletics proof [evidence]
 @higherathletics status
+@higherathletics cancel
 ```
 
 **`commit` — create a commitment**
@@ -392,16 +393,29 @@ Returns your current proof count, days remaining, pledge amount, and pace (on tr
 
 ---
 
+**`cancel` — cancel a pending commitment**
+
+```
+@higherathletics cancel
+```
+
+Cancels a commitment **only if the pledge has not yet been locked onchain** (status `created`). Once the `approve` + `createCommitment` transactions confirm (status `paid`), cancellation is not possible — no withdrawal function exists in the contract.
+
+After a successful cancel the DB record is marked `cancelled` and you are free to start a new commitment immediately.
+
+---
+
 ## Commitment status model
 
 Each commitment moves through four statuses:
 
 | Status | Meaning |
 |--------|---------|
-| `created` | User announced intent (`@higherathletics commit …`). DB record exists but pledge is not locked — no onchain tx yet. `start_time`/`end_time` are placeholders. |
-| `paid` | User signed `approve` + `createCommitment` and both txs confirmed. `start_time` and `end_time` are updated from `block.timestamp` — the countdown starts here. |
+| `created` | User announced intent (`@higherathletics commit …`). DB record exists but pledge is not locked — no onchain tx yet. `start_time`/`end_time` are placeholders. **Cancellable via `@higherathletics cancel`.** |
+| `paid` | User signed `approve` + `createCommitment` and both txs confirmed. `start_time` and `end_time` are updated from `block.timestamp` — the countdown starts here. Cannot be cancelled. |
 | `end` | Commitment period has closed and was settled onchain by the resolution cron. The `outcome` column stores `'passed'` (proofs met) or `'failed'` (pledge forfeited to pool). |
 | `claimed` | User called `claim()` onchain and received their payout. |
+| `cancelled` | User cancelled before the pledge was locked. No onchain state was created; the FID is free to start a new commitment. |
 
 The `outcome` column (`passed` / `failed` / `null`) is set when status transitions to `end`. It preserves the pass/fail distinction while keeping the status surface clean.
 
