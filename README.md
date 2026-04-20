@@ -361,7 +361,7 @@ If no duration is specified, the bot defaults to 30 days. Any other duration is 
 
 **Locking the pledge — via the snap (recommended):**
 
-The bot reply includes a snap link. Tap it in Farcaster → review your commitment → tap "lock pledge". The snap opens a signing page that walks through `approve($HIGHER)` and `createCommitment()` with two wallet prompts. No manual calldata handling needed.
+The bot reply includes a snap link. Tap it in Farcaster → the setup form opens with your goal **pre-filled** from the cast → verify or edit it → tap "next" → review your parsed commitment → tap "lock pledge". The snap opens a signing page that walks through `approve($HIGHER)` and `createCommitment()` with two wallet prompts. No manual calldata handling needed.
 
 The pledge is only locked once both on-chain transactions confirm.
 

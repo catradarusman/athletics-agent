@@ -19,6 +19,7 @@ export type CommitmentState =
       verified_proofs: number;
       required_proofs: number;
       pledge_amount: number;
+      start_time: string; // ISO timestamp
       end_time: string; // ISO timestamp
       pledge_tier: string;
     };

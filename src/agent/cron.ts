@@ -153,6 +153,15 @@ async function runResolutionCron(): Promise<void> {
           const onchain    = await getCommitmentOnchain(onchainId);
           await backfillCommitmentId(c.id, commitmentId, onchain.startTime, onchain.endTime);
           console.log(`[cron:resolution] backfilled commitment_id=${commitmentId} start=${onchain.startTime.toISOString()} end=${onchain.endTime.toISOString()} for db id=${c.id}`);
+
+          // The DB end_time was set from the cast timestamp (intent time), not
+          // the pledge block timestamp. If the real onchain end time is still in
+          // the future, skip resolution — the next cron run will catch it once
+          // the real window closes.
+          if (onchain.endTime > new Date()) {
+            console.log(`[cron:resolution] commitment ${c.id} real end time ${onchain.endTime.toISOString()} not yet reached — deferring`);
+            continue;
+          }
         } catch (err) {
           console.error(`[cron:resolution] backfill failed for commitment ${c.id}:`, err);
           resolutionRetries.set(c.id, retries + 1);

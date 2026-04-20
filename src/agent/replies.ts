@@ -15,7 +15,6 @@ export function commitmentCreated(p: {
   durationDays:   number;
   requiredProofs: number;
   amount:         number;
-  firstDeadline:  string;
   snapUrl?:       string;
 }): string {
   const snapLine = p.snapUrl
@@ -24,7 +23,7 @@ export function commitmentCreated(p: {
   return [
     `commitment queued. ${p.description}.`,
     `${p.requiredProofs} proof${p.requiredProofs === 1 ? '' : 's'} over ${p.durationDays} days. pledge: ${fmt(p.amount)} $HIGHER.`,
-    `first proof due by ${p.firstDeadline}.`,
+    `${p.durationDays}-day window starts when pledge locks onchain.`,
     snapLine,
   ].join('\n');
 }

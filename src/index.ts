@@ -46,6 +46,16 @@ async function main() {
 
   // ─── Snap API ──────────────────────────────────────────────────────────────
 
+  function toSnapStatus(c: { status: string; outcome: string | null }): string {
+    switch (c.status) {
+      case 'created':   return 'pending_onchain';
+      case 'paid':      return 'active';
+      case 'end':       return c.outcome === 'passed' ? 'passed' : 'failed';
+      case 'claimed':   return 'claimed';
+      default:          return 'none'; // 'cancelled' or unknown
+    }
+  }
+
   /**
    * GET /api/commitment/:fid
    * Return the latest active/passed/failed commitment for a FID.
@@ -58,14 +68,17 @@ async function main() {
     try {
       const commitment = await getLatestCommitmentByFid(fid);
       if (!commitment) return void res.json({ status: 'none' });
+      const snapStatus = toSnapStatus(commitment);
+      if (snapStatus === 'none') return void res.json({ status: 'none' });
       res.json({
-        status:          commitment.status,
+        status:          snapStatus,
         id:              commitment.id,
         commitment_id:   commitment.commitment_id,
         template:        commitment.template,
         verified_proofs: commitment.verified_proofs,
         required_proofs: commitment.required_proofs,
         pledge_amount:   commitment.pledge_amount,
+        start_time:      commitment.start_time.toISOString(),
         end_time:        commitment.end_time.toISOString(),
         pledge_tier:     commitment.pledge_tier,
       });

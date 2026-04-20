@@ -4,6 +4,21 @@ All notable changes to the Higher Athletics bot are documented here.
 
 ---
 
+## [2026-04-20] — Snap flow fixes: goal pre-fill, status vocabulary, tier accuracy
+
+### Fixed
+- **Goal text now pre-fills the snap setup form.** When `handleAuth` detects `status='pending_onchain'` (bot DB record exists but pledge not yet signed), it reconstructs a `ParsedCommitment` from the stored `template`, derives `durationDays` from `start_time`/`end_time`, and passes it as `defaults` to `buildSetupForm`. Users see their cast goal in the text box and only need to verify it.
+- **"Next" button no longer wipes the form on Claude parse error.** `handleReview` now passes a `fallback` `ParsedCommitment` (carrying the user's typed `goalText` and selected `durationDays`) instead of `null` when `parseGoal` fails, so the form repopulates rather than going blank.
+- **API status vocabulary mismatch resolved.** `GET /api/commitment/:fid` now translates DB statuses via `toSnapStatus()`: `created→pending_onchain`, `paid→active`, `end+outcome→passed/failed`, `claimed→claimed`. The snap always received raw DB values before; it now receives the vocabulary it expects.
+- **`start_time` added to snap API response** and `CommitmentState` type. `buildStatusFromDb` uses real `start_time` to calculate pace instead of assuming a 30-day commitment.
+- **Tier index/amount derived from UI selection, not AI parse.** `handleReview` now overrides `tierIndex`, `amount`, and `tierName` from `TIERS[durationDays]` after Claude parses the goal, eliminating a mismatch when the AI inferred a different duration than the toggle selected.
+- **`handleAuth` routes `active`/`failed`/`passed`/`claimed` to status display when chain is unreachable.** Previously only `passed` and `pending_onchain` were routed there; an RPC failure for a user with a `paid` (active) DB record would land them on the setup form instead.
+- **`getActiveCommitmentByFid` no longer filters out pre-pledge rows by `end_time`.** The query `AND end_time > $2` was excluding `created` records after their placeholder `end_time` passed (before the real onchain `end_time` was backfilled). Fixed to `AND (commitment_id IS NULL OR end_time > $2)`.
+- **Resolution cron defers if onchain `end_time` hasn't been reached yet.** After backfilling a `commitment_id`, the cron now skips resolution for commitments whose real onchain end time is still in the future, preventing premature settlement.
+- **Removed stale `firstDeadline` from commit reply.** The first-proof deadline was calculated from the cast timestamp, not the pledge timestamp — always wrong. Replaced with `"{N}-day window starts when pledge locks onchain."`.
+
+---
+
 ## [2026-04-20] — Cancel commitment command
 
 ### Added

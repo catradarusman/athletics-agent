@@ -131,7 +131,8 @@ export async function getActiveCommitmentByFid(
 ): Promise<Commitment | null> {
   const result = await query<Record<string, unknown>>(
     `SELECT * FROM commitments
-     WHERE fid = $1 AND status IN ('created', 'paid') AND end_time > $2
+     WHERE fid = $1 AND status IN ('created', 'paid')
+       AND (commitment_id IS NULL OR end_time > $2)
      LIMIT 1`,
     [fid, new Date()]
   );

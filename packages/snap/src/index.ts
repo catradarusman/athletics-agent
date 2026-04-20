@@ -16,7 +16,7 @@ import {
   getContractAddress,
   getTokenAddress,
 } from "./chain.js";
-import { parseGoal } from "./ai.js";
+import { parseGoal, TIERS } from "./ai.js";
 import { getCommitmentState } from "./api.js";
 import { buildCommitHtml, buildClaimHtml } from "./signing/pages.js";
 import type { ParsedCommitment } from "./ai.js";
@@ -175,7 +175,30 @@ async function handleAuth(fid: number, b: string) {
 
   if (hasActive) return handleStatus(fid, b);
 
-  if (state.status === "passed" || state.status === "pending_onchain") {
+  // pending_onchain = bot created a DB record; user hasn't signed yet
+  // → show setup form pre-filled with their cast goal
+  if (state.status === "pending_onchain") {
+    const diffDays = Math.round(
+      (new Date(state.end_time).getTime() - new Date(state.start_time).getTime())
+      / 86_400_000
+    );
+    const durationDays: 15 | 30 = diffDays <= 20 ? 15 : 30;
+    const tier = TIERS[durationDays];
+    const defaults: ParsedCommitment = {
+      description:    state.template,
+      durationDays,
+      requiredProofs: state.required_proofs,
+      amount:         tier.amount,
+      tierIndex:      tier.tierIndex,
+      tierName:       tier.tierName,
+    };
+    await storeParsed(fid, defaults);
+    return buildSetupForm(b, defaults);
+  }
+
+  // active/passed/failed/claimed: chain may be unreachable; show DB status
+  const KNOWN_STATUSES = new Set(["active", "passed", "failed", "claimed"]);
+  if (KNOWN_STATUSES.has(state.status)) {
     return buildStatusFromDb(state, fid, b);
   }
 
@@ -291,12 +314,24 @@ async function handleReview(
   const result = await parseGoal(goalWithDuration);
 
   if (!result.ok) {
-    return buildSetupForm(b, null, result.error.slice(0, 30));
+    const fallback: ParsedCommitment = {
+      description:    goalText,
+      durationDays,
+      requiredProofs: 3, // sensible fallback; user will re-submit
+      amount:         TIERS[durationDays].amount,
+      tierIndex:      TIERS[durationDays].tierIndex,
+      tierName:       TIERS[durationDays].tierName,
+    };
+    return buildSetupForm(b, fallback, result.error.slice(0, 30));
   }
 
+  const tier = TIERS[durationDays];
   const parsed: ParsedCommitment = {
     ...result.data,
     durationDays,
+    tierIndex: tier.tierIndex,
+    amount:    tier.amount,
+    tierName:  tier.tierName,
   };
 
   // Store for edit flow
@@ -688,7 +723,9 @@ function buildStatusFromDb(
   let pace = "on pace";
   if (status === "active") {
     const endTs = new Date(end_time).getTime();
-    const startTs = endTs - (/* assume 30 days */ 30 * 86_400_000); // approx
+    const startTs = 'start_time' in state
+      ? new Date(state.start_time).getTime()
+      : endTs - (30 * 86_400_000);
     const elapsed = (Date.now() - startTs) / (endTs - startTs);
     const onTrack =
       required_proofs > 0

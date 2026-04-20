@@ -187,19 +187,14 @@ async function handleCommit(cast: CastWithInteractions, words: string[]): Promis
     console.error('[webhook] failed to create DB commitment for fid', fid, err);
   }
 
-  // First deadline = end of first week
-  const firstDeadline = new Date(now.getTime() + 7 * 86_400_000);
-  const deadlineStr   = `${firstDeadline.toISOString().split('T')[0]} UTC`;
-
   await castReply(
     cast.hash,
     replies.commitmentCreated({
       description,
       durationDays,
       requiredProofs,
-      amount:        tier.amount,
-      firstDeadline: deadlineStr,
-      snapUrl:       SNAP_URL,
+      amount:   tier.amount,
+      snapUrl:  SNAP_URL,
     }),
     SNAP_URL ? [SNAP_URL] : undefined,
   );
