@@ -78,7 +78,7 @@ async function main() {
   /**
    * POST /api/commitment/register
    * Called by the signing mini app after the user connects their wallet.
-   * Creates a pending_onchain DB record before the user signs the tx.
+   * Creates a 'created' DB record before the user signs the tx.
    * Idempotent: silently succeeds if a pending/active commitment already exists.
    */
   app.post('/api/commitment/register', async (req: Request, res: Response) => {
@@ -115,7 +115,7 @@ async function main() {
         start_time:      now,
         end_time:        endDate,
         required_proofs: requiredProofs,
-        status:          'pending_onchain',
+        status:          'created',
       });
 
       res.json({ ok: true, id: commitment.id });

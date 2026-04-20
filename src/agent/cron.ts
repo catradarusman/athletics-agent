@@ -145,12 +145,14 @@ async function runResolutionCron(): Promise<void> {
             // User never called createCommitment — orphaned DB record; clean it up
             console.warn(`[cron:resolution] commitment ${c.id} fid=${c.fid} has no onchain commitment — marking failed`);
             await updateCommitmentStatus(c.id, 'failed', new Date());
+
             continue;
           }
-          const onchainId = await getFidActiveId(BigInt(c.fid));
-          commitmentId = Number(onchainId);
-          await backfillCommitmentId(c.id, commitmentId);
-          console.log(`[cron:resolution] backfilled commitment_id=${commitmentId} for db id=${c.id}`);
+          const onchainId  = await getFidActiveId(BigInt(c.fid));
+          commitmentId     = Number(onchainId);
+          const onchain    = await getCommitmentOnchain(onchainId);
+          await backfillCommitmentId(c.id, commitmentId, onchain.startTime, onchain.endTime);
+          console.log(`[cron:resolution] backfilled commitment_id=${commitmentId} start=${onchain.startTime.toISOString()} end=${onchain.endTime.toISOString()} for db id=${c.id}`);
         } catch (err) {
           console.error(`[cron:resolution] backfill failed for commitment ${c.id}:`, err);
           resolutionRetries.set(c.id, retries + 1);
@@ -203,11 +205,11 @@ async function runResolutionCron(): Promise<void> {
         console.warn(`[cron:resolution] chain read failed for commitment ${c.id}, using DB state`);
       }
 
-      const status = passed ? 'passed' : 'failed';
-      const now    = new Date();
+      const outcome = passed ? 'passed' : 'failed';
+      const now     = new Date();
 
       // Update DB only after confirmed onchain
-      await updateCommitmentStatus(c.id, status, now);
+      await updateCommitmentStatus(c.id, outcome, now);
 
       // Log pool event for failures (pledge forfeited to pool)
       if (!passed) {

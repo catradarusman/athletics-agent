@@ -2,7 +2,8 @@ import { query, pool } from './index.js';
 
 // ─── Domain types ─────────────────────────────────────────────────────────────
 
-export type CommitmentStatus = 'active' | 'pending_onchain' | 'passed' | 'failed' | 'claimed';
+export type CommitmentStatus  = 'created' | 'paid' | 'end' | 'claimed';
+export type CommitmentOutcome = 'passed' | 'failed';
 export type PledgeTier       = 'Standard' | 'Serious';
 export type PoolEventType    = 'seed' | 'failure' | 'payout' | 'fee_withdrawal';
 
@@ -19,6 +20,7 @@ export interface Commitment {
   required_proofs: number;
   verified_proofs: number;
   status:          CommitmentStatus;
+  outcome:         CommitmentOutcome | null;
   created_at:      Date;
   resolved_at:     Date | null;
   tx_hash:         string | null;
@@ -61,7 +63,7 @@ export interface CreateCommitmentInput {
   end_time:        Date;
   required_proofs: number;
   tx_hash?:        string | null;
-  status?:         CommitmentStatus;  // defaults to 'active' in DB if omitted
+  status?:         CommitmentStatus;  // defaults to 'created' in DB if omitted
 }
 
 export interface RecordProofInput {
@@ -100,7 +102,7 @@ export async function createCommitment(
     `INSERT INTO commitments
        (commitment_id, fid, wallet_address, template, pledge_tier,
         pledge_amount, start_time, end_time, required_proofs, tx_hash, status)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, 'active'))
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, 'created'))
      RETURNING *`,
     [
       data.commitment_id ?? null,
@@ -129,7 +131,7 @@ export async function getActiveCommitmentByFid(
 ): Promise<Commitment | null> {
   const result = await query<Record<string, unknown>>(
     `SELECT * FROM commitments
-     WHERE fid = $1 AND status IN ('active', 'pending_onchain') AND end_time > $2
+     WHERE fid = $1 AND status IN ('created', 'paid') AND end_time > $2
      LIMIT 1`,
     [fid, new Date()]
   );
@@ -183,10 +185,17 @@ export async function recordProof(data: RecordProofInput): Promise<Proof> {
 /**
  * Backfill the onchain commitment ID once the user's createCommitment tx confirms.
  */
-export async function backfillCommitmentId(id: number, commitmentId: number): Promise<void> {
+export async function backfillCommitmentId(
+  id: number,
+  commitmentId: number,
+  startTime: Date,
+  endTime: Date,
+): Promise<void> {
   await query(
-    `UPDATE commitments SET commitment_id = $2, status = 'active' WHERE id = $1`,
-    [id, commitmentId]
+    `UPDATE commitments
+     SET commitment_id = $2, status = 'paid', start_time = $3, end_time = $4
+     WHERE id = $1`,
+    [id, commitmentId, startTime, endTime]
   );
 }
 
@@ -211,27 +220,16 @@ export async function getProofsByCommitmentId(
  */
 export async function updateCommitmentStatus(
   id: number,
-  status: CommitmentStatus,
-  resolvedAt?: Date
+  outcome: CommitmentOutcome,
+  resolvedAt: Date,
 ): Promise<Commitment> {
-  let text: string;
-  let values: unknown[];
-
-  if (resolvedAt !== undefined) {
-    text = `UPDATE commitments
-            SET status = $2, resolved_at = $3
-            WHERE id = $1
-            RETURNING *`;
-    values = [id, status, resolvedAt];
-  } else {
-    text = `UPDATE commitments
-            SET status = $2
-            WHERE id = $1
-            RETURNING *`;
-    values = [id, status];
-  }
-
-  const result = await query<Record<string, unknown>>(text, values);
+  const result = await query<Record<string, unknown>>(
+    `UPDATE commitments
+     SET status = 'end', outcome = $2, resolved_at = $3
+     WHERE id = $1
+     RETURNING *`,
+    [id, outcome, resolvedAt]
+  );
   if (result.rows.length === 0) {
     throw new Error(`updateCommitmentStatus: commitment ${id} not found`);
   }
@@ -246,7 +244,7 @@ export async function updateCommitmentStatus(
 export async function getExpiredActiveCommitments(): Promise<Commitment[]> {
   const result = await query<Record<string, unknown>>(
     `SELECT * FROM commitments
-     WHERE status IN ('active', 'pending_onchain') AND end_time < $1
+     WHERE status IN ('created', 'paid') AND end_time < $1
      ORDER BY end_time ASC`,
     [new Date()]
   );
@@ -267,11 +265,11 @@ export async function getCommitmentById(
 }
 
 /**
- * Return all commitments with status = 'active'.
+ * Return all commitments with status = 'created' or 'paid'.
  */
 export async function getAllActiveCommitments(): Promise<Commitment[]> {
   const result = await query<Record<string, unknown>>(
-    `SELECT * FROM commitments WHERE status IN ('active', 'pending_onchain') ORDER BY created_at ASC`,
+    `SELECT * FROM commitments WHERE status IN ('created', 'paid') ORDER BY created_at ASC`,
     []
   );
   return result.rows.map(toCommitment);
@@ -334,7 +332,7 @@ export async function getLeaderboard(limit: number = 10): Promise<Array<{ fid: n
   const result = await query<Record<string, unknown>>(
     `SELECT fid, COUNT(*) AS completed
      FROM commitments
-     WHERE status IN ('passed', 'claimed')
+     WHERE status IN ('end', 'claimed') AND outcome = 'passed'
      GROUP BY fid
      ORDER BY completed DESC
      LIMIT $1`,
@@ -352,7 +350,7 @@ export async function getLeaderboard(limit: number = 10): Promise<Array<{ fid: n
  */
 export async function countActiveCommitments(): Promise<number> {
   const result = await query<Record<string, unknown>>(
-    `SELECT COUNT(*) AS count FROM commitments WHERE status IN ('active', 'pending_onchain')`,
+    `SELECT COUNT(*) AS count FROM commitments WHERE status IN ('created', 'paid')`,
     []
   );
   return parseInt((result.rows[0] as { count: string }).count, 10);
@@ -367,7 +365,7 @@ export async function getLatestCommitmentByFid(
 ): Promise<Commitment | null> {
   const result = await query<Record<string, unknown>>(
     `SELECT * FROM commitments
-     WHERE fid = $1 AND status IN ('active', 'pending_onchain', 'passed', 'failed')
+     WHERE fid = $1 AND status IN ('created', 'paid', 'end')
      ORDER BY created_at DESC
      LIMIT 1`,
     [fid]
@@ -385,10 +383,10 @@ export async function getWeeklyResolutionStats(since: Date): Promise<{
 }> {
   const result = await query<Record<string, unknown>>(
     `SELECT
-       COUNT(*) FILTER (WHERE status = 'passed') AS passed,
-       COUNT(*) FILTER (WHERE status = 'failed') AS failed
+       COUNT(*) FILTER (WHERE outcome = 'passed') AS passed,
+       COUNT(*) FILTER (WHERE outcome = 'failed') AS failed
      FROM commitments
-     WHERE status IN ('passed', 'failed', 'claimed')
+     WHERE status IN ('end', 'claimed')
        AND resolved_at >= $1`,
     [since]
   );

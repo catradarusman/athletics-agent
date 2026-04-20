@@ -24,6 +24,7 @@ import {
   getFidHasActive,
   getFidActiveId,
   getPublicClient,
+  getCommitmentOnchain,
 } from '../chain/index.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -166,7 +167,7 @@ async function handleCommit(cast: CastWithInteractions, words: string[]): Promis
   const { description, durationDays, requiredProofs } = parsed.data;
   const tier = COMMITMENT_TIERS[durationDays];
 
-  // Create DB record as pending_onchain — tokens not locked until user signs the tx
+  // Create DB record as 'created' — tokens not locked until user signs the tx
   const now     = new Date();
   const endDate = new Date(now.getTime() + durationDays * 86_400_000);
   try {
@@ -179,7 +180,7 @@ async function handleCommit(cast: CastWithInteractions, words: string[]): Promis
       start_time:      now,
       end_time:        endDate,
       required_proofs: requiredProofs,
-      status:          'pending_onchain',
+      status:          'created',
     });
   } catch (err) {
     console.error('[webhook] failed to create DB commitment for fid', fid, err);
@@ -292,9 +293,10 @@ async function handleProof(cast: CastWithInteractions): Promise<void> {
         );
         return;
       }
-      const onchainId = await getFidActiveId(BigInt(fid));
-      await backfillCommitmentId(commitment.id, Number(onchainId));
-      commitment = { ...commitment, commitment_id: Number(onchainId) };
+      const onchainId  = await getFidActiveId(BigInt(fid));
+      const onchain    = await getCommitmentOnchain(onchainId);
+      await backfillCommitmentId(commitment.id, Number(onchainId), onchain.startTime, onchain.endTime);
+      commitment = { ...commitment, commitment_id: Number(onchainId), start_time: onchain.startTime, end_time: onchain.endTime };
     } catch (err) {
       console.error('[webhook] commitment_id backfill failed for fid', fid, err);
       await castReply(

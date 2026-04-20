@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS commitments (
   end_time         TIMESTAMP     NOT NULL,
   required_proofs  INTEGER       NOT NULL,
   verified_proofs  INTEGER       NOT NULL DEFAULT 0,
-  status           TEXT          NOT NULL DEFAULT 'active', -- active | pending_onchain | passed | failed | claimed
+  status           TEXT          NOT NULL DEFAULT 'created', -- created | paid | end | claimed
+  outcome          TEXT,                                     -- passed | failed (set when status = 'end')
   created_at       TIMESTAMP     NOT NULL DEFAULT NOW(),
   resolved_at      TIMESTAMP,
   tx_hash          TEXT                                  -- creation transaction hash
