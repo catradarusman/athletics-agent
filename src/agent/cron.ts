@@ -239,7 +239,7 @@ async function runResolutionCron(): Promise<void> {
         })}`;
       }
 
-      await castInChannel(text, CHANNEL_ID);
+      await castInChannel(text, CHANNEL_ID, SNAP_URL && passed ? [SNAP_URL] : undefined);
       console.log(`[cron:resolution] notified fid=${c.fid} status=${status}`);
 
       // Clean up retry counter on success

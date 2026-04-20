@@ -21,22 +21,24 @@ function getSignerUuid(): string {
 /**
  * Reply to an existing cast by its hash.
  */
-export async function castReply(parentHash: string, text: string): Promise<void> {
+export async function castReply(parentHash: string, text: string, embedUrls?: string[]): Promise<void> {
   await neynar.publishCast({
     signerUuid: getSignerUuid(),
     text,
     parent: parentHash,
+    ...(embedUrls?.length ? { embeds: embedUrls.map(url => ({ url })) } : {}),
   });
 }
 
 /**
  * Post a new cast into a channel (no parent).
  */
-export async function castInChannel(text: string, channelId: string): Promise<void> {
+export async function castInChannel(text: string, channelId: string, embedUrls?: string[]): Promise<void> {
   await neynar.publishCast({
     signerUuid: getSignerUuid(),
     text,
     channelId,
+    ...(embedUrls?.length ? { embeds: embedUrls.map(url => ({ url })) } : {}),
   });
 }
 

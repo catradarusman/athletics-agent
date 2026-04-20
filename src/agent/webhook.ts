@@ -199,6 +199,7 @@ async function handleCommit(cast: CastWithInteractions, words: string[]): Promis
       firstDeadline: deadlineStr,
       snapUrl:       SNAP_URL,
     }),
+    SNAP_URL ? [SNAP_URL] : undefined,
   );
 }
 
@@ -224,12 +225,7 @@ async function handleStatus(cast: CastWithInteractions): Promise<void> {
     onTrack,
   });
 
-  // Append snap URL if configured and there's room in the 320-char limit
-  const withSnap = SNAP_URL && (statusReply.length + SNAP_URL.length + 2) <= 320
-    ? `${statusReply}\n${SNAP_URL}`
-    : statusReply;
-
-  await castReply(cast.hash, withSnap);
+  await castReply(cast.hash, statusReply, SNAP_URL ? [SNAP_URL] : undefined);
 }
 
 async function handlePool(cast: CastWithInteractions): Promise<void> {
@@ -403,6 +399,7 @@ async function handleProof(cast: CastWithInteractions): Promise<void> {
         payout:   Math.round(commitment.pledge_amount * 0.9),
         snapUrl:  SNAP_URL,
       }),
+      SNAP_URL ? [SNAP_URL] : undefined,
     );
   } else {
     await castReply(

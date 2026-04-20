@@ -19,7 +19,7 @@ export function commitmentCreated(p: {
   snapUrl?:       string;
 }): string {
   const snapLine = p.snapUrl
-    ? `lock pledge + track progress: ${p.snapUrl}`
+    ? `lock pledge + track progress ↑`
     : `sign the approve + createCommitment txs to lock your pledge`;
   return [
     `commitment queued. ${p.description}.`,
@@ -83,7 +83,7 @@ export function commitmentPassed(p: {
   snapUrl?:      string;
 }): string {
   const claim = p.snapUrl
-    ? `claim via snap: ${p.snapUrl}`
+    ? `claim via snap ↑`
     : (p.claimDetails ?? 'call claim() on the contract');
   return [
     `✓ ${p.current}/${p.total}. done.`,
