@@ -836,29 +836,18 @@ app.get("/sign/claim", (c) => {
   return c.html(html);
 });
 
-// Build fallback HTML with fc:frame meta tag so Warpcast's embed crawler
-// recognises this URL as an interactive Mini App and renders it in-feed.
 const SNAP_BASE = (process.env.SNAP_PUBLIC_BASE_URL ?? "https://higherathletics-snap.host.neynar.app").replace(/\/$/, "");
 const OG_IMAGE  = `${SNAP_BASE}/~/og-image`;
-const FC_FRAME  = JSON.stringify({
-  version: "next",
-  imageUrl: OG_IMAGE,
-  button: {
-    title: "check in",
-    action: {
-      type: "launch_frame",
-      url: `${SNAP_BASE}/`,
-      splashImageUrl: OG_IMAGE,
-      splashBackgroundColor: "#000000",
-    },
-  },
-});
+// Plain OG fallback — no fc:frame tag. fc:frame causes Neynar's embed crawler
+// (which fetches without the snap Accept header) to cache this URL as a Mini App,
+// which then goes through the domain-verification path instead of the snap protocol.
+// Warpcast fetches embed URLs directly with Accept: application/vnd.farcaster.snap+json
+// and uses that response for snap rendering.
 const FALLBACK_HTML = `<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>higher athletics</title>
-<meta name="fc:frame" content='${FC_FRAME}' />
 <meta name="description" content="lock in. show the work. get paid.">
 <meta property="og:title" content="higher athletics">
 <meta property="og:description" content="lock in. show the work. get paid.">
@@ -879,6 +868,33 @@ const FALLBACK_HTML = `<!DOCTYPE html>
 </div>
 </body>
 </html>`;
+
+// ─── Farcaster domain manifest ────────────────────────────────────────────────
+// Required by Warpcast to render this Mini App as an embed in casts.
+// Set FC_MANIFEST_HEADER / FC_MANIFEST_PAYLOAD / FC_MANIFEST_SIGNATURE env vars
+// with the JFS values generated from the Warpcast developer tools:
+//   warpcast.com/~/developers → "Domain Manifest" → domain: higherathletics-snap.host.neynar.app
+app.get('/.well-known/farcaster.json', (c) => {
+  const header    = process.env.FC_MANIFEST_HEADER;
+  const payload   = process.env.FC_MANIFEST_PAYLOAD;
+  const signature = process.env.FC_MANIFEST_SIGNATURE;
+  const manifest: Record<string, unknown> = {
+    miniapp: {
+      version: '1',
+      name: 'higher athletics',
+      iconUrl: `${SNAP_BASE}/~/og-image`,
+      homeUrl: `${SNAP_BASE}/`,
+      imageUrl: `${SNAP_BASE}/~/og-image`,
+      buttonTitle: 'check in',
+      splashImageUrl: `${SNAP_BASE}/~/og-image`,
+      splashBackgroundColor: '#000000',
+    },
+  };
+  if (header && payload && signature) {
+    manifest.accountAssociation = { header, payload, signature };
+  }
+  return c.json(manifest);
+});
 
 // Snap handler for all other routes
 registerSnapHandler(app, snap, {
