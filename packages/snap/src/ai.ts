@@ -81,7 +81,10 @@ Rules:
 
     let parsed: { ok: boolean; description?: string; durationDays?: number; requiredProofs?: number; error?: string };
     try {
-      parsed = JSON.parse(content.text.trim());
+      const raw = content.text.trim();
+      // Strip markdown code fences — Claude sometimes wraps JSON despite instructions
+      const jsonText = raw.replace(/^```(?:json)?\n?/i, "").replace(/\n?```$/i, "").trim();
+      parsed = JSON.parse(jsonText);
     } catch {
       return { ok: false, error: 'try: "run 3x/week for 30 days"' };
     }
