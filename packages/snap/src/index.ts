@@ -904,7 +904,10 @@ app.get('/.well-known/farcaster.json', (c) => {
 // HTML fallback.
 app.get('/', async (c, next) => {
   const accept = c.req.header('Accept') ?? '';
-  const wantsHtml = accept.includes('text/html') && !accept.includes('application/vnd.farcaster.snap+json');
+  // Only serve HTML to strict text/html-only requests (e.g. direct browser nav without */*).
+  // Crawlers like Neynar send browser-style Accept (text/html,...,*/*;q=0.8) — they must
+  // get snap JSON so the embed is cached with the correct content-type.
+  const wantsHtml = accept.includes('text/html') && !accept.includes('*/*') && !accept.includes('application/vnd.farcaster.snap+json');
   if (wantsHtml) return next();
   const result = await snap({ action: { type: ACTION_TYPE_GET }, request: c.req.raw });
   return new Response(JSON.stringify(result), {
