@@ -18,7 +18,7 @@ export function commitmentCreated(p: {
   snapUrl?:       string;
 }): string {
   const snapLine = p.snapUrl
-    ? `lock pledge + track progress ↑`
+    ? `lock pledge → ${p.snapUrl}`
     : `sign the approve + createCommitment txs to lock your pledge`;
   return [
     `commitment queued. ${p.description}.`,
