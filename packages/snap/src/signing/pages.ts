@@ -52,13 +52,19 @@ const SHARED_STYLES = `
 `;
 
 const SHARED_PROVIDER_JS = `
+// Signal ready immediately so Farcaster dismisses the splash screen
+(async () => {
+  try {
+    const { sdk } = await import('https://esm.sh/@farcaster/miniapp-sdk@latest');
+    if (sdk?.actions?.ready) await sdk.actions.ready();
+  } catch (_) {}
+})();
+
 async function getProvider() {
   try {
-    const mod = await import('https://esm.sh/@farcaster/frame-sdk@latest');
-    const sdk = mod.default ?? mod.sdk ?? mod;
-    if (sdk?.actions?.ready) await sdk.actions.ready();
-    const ethProvider = sdk?.wallet?.ethProvider;
-    if (ethProvider) return ethProvider;
+    const { sdk } = await import('https://esm.sh/@farcaster/miniapp-sdk@latest');
+    const provider = await sdk.wallet.getEthereumProvider();
+    if (provider) return provider;
   } catch (_) { /* fall through */ }
   if (typeof window !== 'undefined' && window.ethereum) return window.ethereum;
   throw new Error('no wallet provider found. open this in farcaster');
@@ -124,12 +130,12 @@ export function buildCommitHtml(p: CommitPageParams): string {
 <body>
 <div class="card">
   <h1>lock pledge</h1>
-  <p class="sub">two transactions required</p>
+  <p class="sub">approve + lock pledge onchain</p>
   <div class="row"><span class="label">commitment</span><span class="value" style="max-width:200px;text-align:right;font-size:13px">${desc}</span></div>
   <div class="row"><span class="label">duration</span><span class="value">${p.durationDays} days</span></div>
   <div class="row"><span class="label">proofs required</span><span class="value">${p.requiredProofs}</span></div>
   <div class="row"><span class="label">pledge</span><span class="value">${p.amount.toLocaleString()} $HIGHER</span></div>
-  <p class="note">step 1: approve $HIGHER spend<br>step 2: lock pledge onchain<br>your wallet will prompt twice.</p>
+  <p class="note">approve $HIGHER spend + lock pledge onchain.<br>confirm in your wallet to proceed.</p>
   <button class="btn" id="btn" onclick="run()">sign transactions</button>
   <div class="status" id="status"></div>
 </div>
@@ -175,22 +181,25 @@ window.run = async function() {
       }
     }
 
-    setStatus('step 1/2 — approve $HIGHER (sign in wallet)...');
-    const approveTx = await provider.request({
-      method: 'eth_sendTransaction',
-      params: [{ from, to: TOKEN_ADDR, data: APPROVE_DATA }],
-    });
-    setStatus('approve submitted. waiting briefly...');
-    await new Promise(r => setTimeout(r, 2000));
-
-    setStatus('step 2/2 — lock pledge (sign in wallet)...');
-    const commitTx = await provider.request({
-      method: 'eth_sendTransaction',
-      params: [{ from, to: CONTRACT_ADDR, data: COMMIT_DATA }],
-    });
-    setStatus('✓ submitted. commitment activates when both txs confirm (~30s).', 'ok');
+    setStatus('sign transactions in your wallet...');
+    try {
+      await provider.request({
+        method: 'wallet_sendCalls',
+        params: [{ version: '1.0', from, calls: [
+          { to: TOKEN_ADDR, data: APPROVE_DATA },
+          { to: CONTRACT_ADDR, data: COMMIT_DATA },
+        ]}],
+      });
+    } catch (_batchErr) {
+      // Fallback: sequential transactions
+      setStatus('step 1/2 — approve $HIGHER (sign in wallet)...');
+      await provider.request({ method: 'eth_sendTransaction', params: [{ from, to: TOKEN_ADDR, data: APPROVE_DATA }] });
+      await new Promise(r => setTimeout(r, 2000));
+      setStatus('step 2/2 — lock pledge (sign in wallet)...');
+      await provider.request({ method: 'eth_sendTransaction', params: [{ from, to: CONTRACT_ADDR, data: COMMIT_DATA }] });
+    }
+    setStatus('✓ submitted. commitment activates when txs confirm (~30s).', 'ok');
     btn.textContent = 'done';
-    console.log('txs:', approveTx, commitTx);
   } catch (err) {
     const msg = err?.message ?? String(err);
     setStatus(msg.length > 80 ? msg.slice(0, 77) + '...' : msg, 'err');
