@@ -836,12 +836,57 @@ app.get("/sign/claim", (c) => {
   return c.html(html);
 });
 
+// Build fallback HTML with fc:frame meta tag so Warpcast's embed crawler
+// recognises this URL as an interactive Mini App and renders it in-feed.
+const SNAP_BASE = (process.env.SNAP_PUBLIC_BASE_URL ?? "https://higherathletics-snap.host.neynar.app").replace(/\/$/, "");
+const OG_IMAGE  = `${SNAP_BASE}/~/og-image`;
+const FC_FRAME  = JSON.stringify({
+  version: "next",
+  imageUrl: OG_IMAGE,
+  button: {
+    title: "check in",
+    action: {
+      type: "launch_frame",
+      url: `${SNAP_BASE}/`,
+      splashImageUrl: OG_IMAGE,
+      splashBackgroundColor: "#000000",
+    },
+  },
+});
+const FALLBACK_HTML = `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>higher athletics</title>
+<meta name="fc:frame" content='${FC_FRAME}' />
+<meta name="description" content="lock in. show the work. get paid.">
+<meta property="og:title" content="higher athletics">
+<meta property="og:description" content="lock in. show the work. get paid.">
+<meta property="og:image" content="${OG_IMAGE}">
+<meta property="og:image:alt" content="higher athletics">
+<meta property="og:url" content="${SNAP_BASE}/">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="higher athletics">
+<meta name="twitter:description" content="lock in. show the work. get paid.">
+<meta name="twitter:image" content="${OG_IMAGE}">
+</head>
+<body style="font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#000;color:#fff;margin:0">
+<div style="text-align:center;padding:24px">
+<p style="font-size:18px;font-weight:bold;margin-bottom:8px">higher athletics</p>
+<p style="font-size:14px;color:#aaa;margin-bottom:24px">lock in. show the work. get paid.</p>
+<a href="https://farcaster.xyz" style="color:#22c55e;text-decoration:none">open in farcaster →</a>
+</div>
+</body>
+</html>`;
+
 // Snap handler for all other routes
 registerSnapHandler(app, snap, {
   openGraph: {
     title: "higher athletics",
     description: "lock in. show the work. get paid.",
   },
+  fallbackHtml: FALLBACK_HTML,
 });
 
 export default app;
