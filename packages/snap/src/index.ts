@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { SPEC_VERSION, type SnapFunction, type SnapHandlerResult, type SnapElementInput } from "@farcaster/snap";
+import { SPEC_VERSION, ACTION_TYPE_GET, type SnapFunction, type SnapHandlerResult, type SnapElementInput } from "@farcaster/snap";
 import { registerSnapHandler } from "@farcaster/snap-hono";
 import {
   createTursoDataStore,
@@ -894,6 +894,28 @@ app.get('/.well-known/farcaster.json', (c) => {
     manifest.accountAssociation = { header, payload, signature };
   }
   return c.json(manifest);
+});
+
+// Return snap JSON for any request that doesn't explicitly ask for text/html.
+// This ensures Neynar's embed crawler (which sends Accept: */* or no Accept)
+// caches content_type: application/vnd.farcaster.snap+json, which is what
+// Warpcast uses to decide whether to render the embed as a snap inline.
+// Browser requests (Accept: text/html) fall through to registerSnapHandler's
+// HTML fallback.
+app.get('/', async (c, next) => {
+  const accept = c.req.header('Accept') ?? '';
+  const wantsHtml = accept.includes('text/html') && !accept.includes('application/vnd.farcaster.snap+json');
+  if (wantsHtml) return next();
+  const result = await snap({ action: { type: ACTION_TYPE_GET }, request: c.req.raw });
+  return new Response(JSON.stringify(result), {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/vnd.farcaster.snap+json',
+      'Vary': 'Accept',
+      'Access-Control-Allow-Origin': '*',
+      'Link': '</>; rel="alternate"; type="application/vnd.farcaster.snap+json", </>; rel="alternate"; type="text/html"',
+    },
+  });
 });
 
 // Snap handler for all other routes
