@@ -437,7 +437,7 @@ async function handleReview(
           on: {
             press: {
               action: "open_mini_app",
-              params: { url: signUrl },
+              params: { target: signUrl },
             },
           },
         },
@@ -552,7 +552,7 @@ function buildActiveStatus(p: ActiveStatusParams) {
       passedElements.claimbtn = {
         type: "button",
         props: { label: "claim reward", variant: "primary" },
-        on: { press: { action: "open_mini_app", params: { url: claimUrl } } },
+        on: { press: { action: "open_mini_app", params: { target: claimUrl } } },
       };
     }
 
@@ -693,7 +693,7 @@ function buildActiveStatus(p: ActiveStatusParams) {
             press: {
               action: "open_url",
               params: {
-                url: "https://warpcast.com/~/channel/higher-athletics",
+                target: "https://warpcast.com/~/channel/higher-athletics",
               },
             },
           },

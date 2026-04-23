@@ -12,14 +12,14 @@ importers:
         specifier: ^0.40.0
         version: 0.40.1
       '@farcaster/snap':
-        specifier: ^2.0.3
-        version: 2.0.3(typescript@5.9.3)(zod@4.3.6)
+        specifier: ^2.1.0
+        version: 2.1.0(typescript@5.9.3)(zod@4.3.6)
       '@farcaster/snap-hono':
-        specifier: ^2.0.3
-        version: 2.0.3(hono@4.12.14)(typescript@5.9.3)(zod@4.3.6)
+        specifier: ^2.0.4
+        version: 2.0.4(hono@4.12.14)(typescript@5.9.3)(zod@4.3.6)
       '@farcaster/snap-turso':
-        specifier: ^2.0.3
-        version: 2.0.3(typescript@5.9.3)(zod@4.3.6)
+        specifier: ^2.0.4
+        version: 2.0.4(typescript@5.9.3)(zod@4.3.6)
       '@hono/node-server':
         specifier: ^1.13.1
         version: 1.19.14(hono@4.12.14)
@@ -213,16 +213,16 @@ packages:
       typescript: '>= 5.8.3'
       viem: 2.x
 
-  '@farcaster/snap-hono@2.0.3':
-    resolution: {integrity: sha512-NCSEvVg9Fjk598TllJ/NqDt527DMAPhsv4wGm3Xepf1Pc/ZvlD+m3mgMcn8+SljwoDzBNv4bd2bAkmAggQ9EFw==}
+  '@farcaster/snap-hono@2.0.4':
+    resolution: {integrity: sha512-+f5iJhLDS67bNi7KhuWbuJUEu7Qja3y53uaZJ6DxgUoLh8GYWzxfAekkqWs1qDtnmL6KeFVnTQO45BThQKDioA==}
     peerDependencies:
       hono: '>=4.0.0'
 
-  '@farcaster/snap-turso@2.0.3':
-    resolution: {integrity: sha512-yPcbhRTfn7U1rUIrlCUkaOxYkLPJCRsG4R3fUlx6MkQR14aFsz6fwvJvsdDjjxiiogiKXyTmz3mtucS4Fs2gtQ==}
+  '@farcaster/snap-turso@2.0.4':
+    resolution: {integrity: sha512-E+4Ftb5RgGln/qUJo+9G1v7Ge9GMqO/wfO5Kd1QHDDtgExRFHb7WHgysVhuZxOu1qF9KgIy8bWBaPQJV5um+jg==}
 
-  '@farcaster/snap@2.0.3':
-    resolution: {integrity: sha512-rBkmjEFcup5EgrQ52PVi0NUTzA45RpmeHXIRjZQgBe6rP0LvfvklP6tyxkZn0q012hYOuvzVXyae+lJP0bTGzg==}
+  '@farcaster/snap@2.1.0':
+    resolution: {integrity: sha512-DBxrqQjdsLN1E1K/HGitl2r1e/vB8USSEwtlIq2y2nS9WkeLGUZojwX0HRHEXTiDB+K7Su5kZPL71wBXx4evRA==}
     peerDependencies:
       '@json-render/react': '*'
       '@neynar/ui': '*'
@@ -680,9 +680,9 @@ snapshots:
       typescript: 5.9.3
       viem: 2.48.0(typescript@5.9.3)(zod@4.3.6)
 
-  '@farcaster/snap-hono@2.0.3(hono@4.12.14)(typescript@5.9.3)(zod@4.3.6)':
+  '@farcaster/snap-hono@2.0.4(hono@4.12.14)(typescript@5.9.3)(zod@4.3.6)':
     dependencies:
-      '@farcaster/snap': 2.0.3(typescript@5.9.3)(zod@4.3.6)
+      '@farcaster/snap': 2.1.0(typescript@5.9.3)(zod@4.3.6)
       '@resvg/resvg-wasm': 2.6.2
       hono: 4.12.14
       satori: 0.10.14
@@ -696,9 +696,9 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@farcaster/snap-turso@2.0.3(typescript@5.9.3)(zod@4.3.6)':
+  '@farcaster/snap-turso@2.0.4(typescript@5.9.3)(zod@4.3.6)':
     dependencies:
-      '@farcaster/snap': 2.0.3(typescript@5.9.3)(zod@4.3.6)
+      '@farcaster/snap': 2.1.0(typescript@5.9.3)(zod@4.3.6)
       '@tursodatabase/serverless': 0.2.4
     transitivePeerDependencies:
       - '@json-render/react'
@@ -710,7 +710,7 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@farcaster/snap@2.0.3(typescript@5.9.3)(zod@4.3.6)':
+  '@farcaster/snap@2.1.0(typescript@5.9.3)(zod@4.3.6)':
     dependencies:
       '@farcaster/jfs': 0.3.0(typescript@5.9.3)(viem@2.48.0(typescript@5.9.3)(zod@4.3.6))
       '@json-render/core': 0.15.0(zod@4.3.6)
