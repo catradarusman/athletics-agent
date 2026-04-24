@@ -38,6 +38,7 @@ contract HigherCommitmentPool is AccessControl, ReentrancyGuard, Pausable {
     uint256 public prizePool;         // tokens available for winner bonuses
     uint256 public accumulatedFees;   // 10 % fees pending withdrawal
     uint256 public nextCommitmentId;
+    uint256 public poolShareBps = 200; // bonus = poolShareBps/10000 of prizePool (default 2%)
 
     // ─── Structs / enums ─────────────────────────────────────────────────────
     enum Status { Active, Passed, Failed, Claimed }
@@ -168,7 +169,7 @@ contract HigherCommitmentPool is AccessControl, ReentrancyGuard, Pausable {
         uint256 pledge    = c.pledgeAmount;
         uint256 fee       = pledge * 10 / 100;
         uint256 bonusCap  = pledge * 50 / 100;
-        uint256 poolShare = prizePool * 2 / 100;
+        uint256 poolShare = prizePool * poolShareBps / 10_000;
         uint256 bonus     = bonusCap < poolShare ? bonusCap : poolShare;
         uint256 payout    = pledge - fee + bonus;
 
@@ -256,6 +257,15 @@ contract HigherCommitmentPool is AccessControl, ReentrancyGuard, Pausable {
         accumulatedFees = 0;
         higherToken.safeTransfer(feeRecipient, amount);
         emit FeesWithdrawn(feeRecipient, amount);
+    }
+
+    /**
+     * @notice Set the pool share per winner in basis points (100 = 1%, 200 = 2%, 500 = 5%).
+     * @param bps New value; capped at 1000 (10%) to prevent pool drain in a single claim.
+     */
+    function setPoolShareBps(uint256 bps) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(bps > 0 && bps <= 1000, "bps must be 1-1000");
+        poolShareBps = bps;
     }
 
     /**
