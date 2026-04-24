@@ -78,13 +78,15 @@ function setStatus(msg, type = '') {
   status.className = 'status' + (type ? ' ' + type : '');
 }
 
-async function waitForReceipt(provider, txHash) {
+async function waitForReceipt(txHash) {
   while (true) {
-    const receipt = await provider.request({
-      method: 'eth_getTransactionReceipt',
-      params: [txHash],
+    const res = await fetch('https://mainnet.base.org', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getTransactionReceipt', params: [txHash] }),
     });
-    if (receipt !== null) return receipt;
+    const { result } = await res.json();
+    if (result !== null && result !== undefined) return result;
     await new Promise(r => setTimeout(r, 2000));
   }
 }
@@ -210,7 +212,7 @@ window.run = async function() {
       setStatus('step 1/2 — approve $HIGHER (sign in wallet)...');
       const approveTxHash = await provider.request({ method: 'eth_sendTransaction', params: [{ from, to: TOKEN_ADDR, data: APPROVE_DATA }] });
       setStatus('waiting for approval to confirm...');
-      await waitForReceipt(provider, approveTxHash);
+      await waitForReceipt(approveTxHash);
       setStatus('step 2/2 — lock pledge (sign in wallet)...');
       await provider.request({ method: 'eth_sendTransaction', params: [{ from, to: CONTRACT_ADDR, data: COMMIT_DATA }] });
     }
