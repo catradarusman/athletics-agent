@@ -178,17 +178,21 @@ window.run = async function() {
     if (!from) throw new Error('no account connected');
 
     if (BOT_API_URL) {
-      setStatus('registering commitment...');
-      const regRes = await fetch(BOT_API_URL + '/api/commitment/register', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-snap-secret': SNAP_SECRET },
-        body: JSON.stringify({ fid: FID, walletAddress: from, description: DESCRIPTION,
-          durationDays: DURATION_DAYS, requiredProofs: REQUIRED_PROOFS,
-          tierName: TIER_NAME, tierIndex: TIER_INDEX, pledgeAmount: PLEDGE_AMOUNT }),
-      });
-      if (!regRes.ok) {
-        const err = await regRes.text();
-        if (!err.includes('already')) console.warn('register commitment:', err);
+      try {
+        setStatus('registering commitment...');
+        const regRes = await fetch(BOT_API_URL + '/api/commitment/register', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-snap-secret': SNAP_SECRET },
+          body: JSON.stringify({ fid: FID, walletAddress: from, description: DESCRIPTION,
+            durationDays: DURATION_DAYS, requiredProofs: REQUIRED_PROOFS,
+            tierName: TIER_NAME, tierIndex: TIER_INDEX, pledgeAmount: PLEDGE_AMOUNT }),
+        });
+        if (!regRes.ok) {
+          const err = await regRes.text();
+          if (!err.includes('already')) console.warn('register commitment:', err);
+        }
+      } catch (regErr) {
+        console.warn('register commitment failed (non-fatal):', regErr);
       }
     }
 

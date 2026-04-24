@@ -42,6 +42,15 @@ async function main() {
   app.use(express.json());
   app.use(webhookRouter);
 
+  // CORS for snap mini app cross-origin requests; security is provided by x-snap-secret
+  app.use('/api', (req: Request, res: Response, next: () => void) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'content-type, x-snap-secret');
+    if (req.method === 'OPTIONS') return void res.sendStatus(204);
+    next();
+  });
+
   app.get('/health', (_req, res) => res.json({ ok: true }));
 
   // ─── Snap API ──────────────────────────────────────────────────────────────
