@@ -77,6 +77,17 @@ function setStatus(msg, type = '') {
   status.textContent = msg;
   status.className = 'status' + (type ? ' ' + type : '');
 }
+
+async function waitForReceipt(provider, txHash) {
+  while (true) {
+    const receipt = await provider.request({
+      method: 'eth_getTransactionReceipt',
+      params: [txHash],
+    });
+    if (receipt !== null) return receipt;
+    await new Promise(r => setTimeout(r, 2000));
+  }
+}
 `;
 
 export interface CommitPageParams {
@@ -185,16 +196,17 @@ window.run = async function() {
     try {
       await provider.request({
         method: 'wallet_sendCalls',
-        params: [{ version: '1.0', from, calls: [
+        params: [{ version: '1.0', chainId: '0x2105', from, calls: [
           { to: TOKEN_ADDR, data: APPROVE_DATA },
           { to: CONTRACT_ADDR, data: COMMIT_DATA },
         ]}],
       });
-    } catch (_batchErr) {
-      // Fallback: sequential transactions
+    } catch (batchErr) {
+      console.warn('[wallet_sendCalls] not supported, falling back to sequential:', batchErr);
       setStatus('step 1/2 — approve $HIGHER (sign in wallet)...');
-      await provider.request({ method: 'eth_sendTransaction', params: [{ from, to: TOKEN_ADDR, data: APPROVE_DATA }] });
-      await new Promise(r => setTimeout(r, 2000));
+      const approveTxHash = await provider.request({ method: 'eth_sendTransaction', params: [{ from, to: TOKEN_ADDR, data: APPROVE_DATA }] });
+      setStatus('waiting for approval to confirm...');
+      await waitForReceipt(provider, approveTxHash);
       setStatus('step 2/2 — lock pledge (sign in wallet)...');
       await provider.request({ method: 'eth_sendTransaction', params: [{ from, to: CONTRACT_ADDR, data: COMMIT_DATA }] });
     }
