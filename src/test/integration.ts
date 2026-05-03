@@ -24,6 +24,7 @@ import { pool as pgPool, initDb, query }      from '../db/index.js';
 import {
   createCommitment,
   updateCommitmentStatus,
+  markCommitmentClaimed,
   getCommitmentById,
   recordProof         as dbRecordProof,
   getProofsByCommitmentId,
@@ -197,7 +198,7 @@ describe('Integration: HigherCommitmentPool + DB', function () {
       // ── Step 2: Mirror commitment in DB ──────────────────────────────────────
       const dbC = await insertDbCommitment(onchainId, user.address, 3);
 
-      expect(dbC.status).to.equal('active');
+      expect(dbC.status).to.equal('created');
       expect(dbC.commitment_id).to.equal(onchainId);
       expect(dbC.required_proofs).to.equal(3);
       expect(dbC.pledge_amount).to.equal(1_000);
@@ -240,7 +241,8 @@ describe('Integration: HigherCommitmentPool + DB', function () {
       await updateCommitmentStatus(dbC.id, 'passed', new Date());
 
       const dbAfterResolve = await getCommitmentById(dbC.id);
-      expect(dbAfterResolve!.status).to.equal('passed');
+      expect(dbAfterResolve!.status).to.equal('end');
+      expect(dbAfterResolve!.outcome).to.equal('passed');
       expect(dbAfterResolve!.resolved_at).to.be.instanceOf(Date);
 
       // ── Step 5: Claim reward ─────────────────────────────────────────────────
@@ -251,7 +253,7 @@ describe('Integration: HigherCommitmentPool + DB', function () {
       expect((await pool.commitments(onchainId)).status).to.equal(3); // Claimed
 
       // Mirror in DB
-      await updateCommitmentStatus(dbC.id, 'claimed');
+      await markCommitmentClaimed(dbC.id);
       const dbAfterClaim = await getCommitmentById(dbC.id);
       expect(dbAfterClaim!.status).to.equal('claimed');
 
@@ -292,7 +294,7 @@ describe('Integration: HigherCommitmentPool + DB', function () {
       const onchainId     = Number(parseEvent(createReceipt, pool, 'CommitmentCreated').args.commitmentId);
 
       const dbC = await insertDbCommitment(onchainId, user.address, 3);
-      expect(dbC.status).to.equal('active');
+      expect(dbC.status).to.equal('created');
 
       // ── Step 2: Record only 1 proof (under the 3 required) ──────────────────
       await recordProof(pool, agentSigner, dbC.id, onchainId, 1);
@@ -322,7 +324,8 @@ describe('Integration: HigherCommitmentPool + DB', function () {
       await updateCommitmentStatus(dbC.id, 'failed', new Date());
 
       const dbFailed = await getCommitmentById(dbC.id);
-      expect(dbFailed!.status).to.equal('failed');
+      expect(dbFailed!.status).to.equal('end');
+      expect(dbFailed!.outcome).to.equal('failed');
       expect(dbFailed!.resolved_at).to.be.instanceOf(Date);
 
       // ── Step 5: Full pledge forfeited to prize pool ──────────────────────────
@@ -336,9 +339,10 @@ describe('Integration: HigherCommitmentPool + DB', function () {
       await expect(pool.connect(user).claim(onchainId))
         .to.be.revertedWith('Commitment not passed');
 
-      // DB status must remain 'failed' — no update on a failed claim attempt
+      // DB status must remain 'end'/'failed' — no update on a failed claim attempt
       const dbStillFailed = await getCommitmentById(dbC.id);
-      expect(dbStillFailed!.status).to.equal('failed');
+      expect(dbStillFailed!.status).to.equal('end');
+      expect(dbStillFailed!.outcome).to.equal('failed');
     });
   });
 
@@ -393,16 +397,17 @@ describe('Integration: HigherCommitmentPool + DB', function () {
       const id      = Number(parseEvent(receipt, pool, 'CommitmentCreated').args.commitmentId);
 
       const created = await insertDbCommitment(id, user.address, 1);
-      expect(created.status).to.equal('active');
+      expect(created.status).to.equal('created');
       expect(created.resolved_at).to.be.null;
 
       const resolvedAt = new Date();
       await updateCommitmentStatus(created.id, 'passed', resolvedAt);
       const afterPass = await getCommitmentById(created.id);
-      expect(afterPass!.status).to.equal('passed');
+      expect(afterPass!.status).to.equal('end');
+      expect(afterPass!.outcome).to.equal('passed');
       expect(afterPass!.resolved_at).to.not.be.null;
 
-      await updateCommitmentStatus(created.id, 'claimed');
+      await markCommitmentClaimed(created.id);
       const afterClaim = await getCommitmentById(created.id);
       expect(afterClaim!.status).to.equal('claimed');
     });

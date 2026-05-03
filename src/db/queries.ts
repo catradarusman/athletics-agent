@@ -264,6 +264,13 @@ export async function getExpiredActiveCommitments(): Promise<Commitment[]> {
 }
 
 /**
+ * Mark a commitment as claimed after the user calls claim() on the contract.
+ */
+export async function markCommitmentClaimed(id: number): Promise<void> {
+  await query('UPDATE commitments SET status = $1 WHERE id = $2', ['claimed', id]);
+}
+
+/**
  * Fetch a single commitment by its DB primary key. Returns null if not found.
  */
 export async function getCommitmentById(
