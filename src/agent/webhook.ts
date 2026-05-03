@@ -81,7 +81,16 @@ function isReplyToBot(cast: CastWithInteractions): boolean {
 }
 
 function getImageUrls(cast: CastWithInteractions): string[] {
-  return (cast.embeds ?? []).flatMap(e => {
+  // Include embeds from any quoted cast so proof images in quote casts are extracted
+  const allEmbeds = [
+    ...(cast.embeds ?? []),
+    ...(cast.embeds ?? []).flatMap(e => {
+      const ec = e as { cast?: { embeds?: unknown[] } };
+      return ec.cast?.embeds ?? [];
+    }),
+  ];
+
+  return allEmbeds.flatMap(e => {
     const embed = e as { url?: string; metadata?: { content_type?: string | null } };
     const url = embed.url ?? '';
     if (!url) return [];
@@ -382,8 +391,11 @@ async function handleProof(cast: CastWithInteractions): Promise<void> {
       ai_summary:    result.summary ?? null,
     });
   } catch (err: unknown) {
-    // Duplicate cast_hash → no-op
-    if ((err as { code?: string }).code === '23505') return;
+    // Duplicate cast_hash → already recorded
+    if ((err as { code?: string }).code === '23505') {
+      await castReply(cast.hash, `proof already recorded for this cast`);
+      return;
+    }
     throw err;
   }
 
@@ -602,6 +614,7 @@ webhookRouter.post('/webhook', async (req: Request, res: Response) => {
     if (isBotMentioned(cast) || isReplyToBot(cast)) {
       if (!isRelatedToChannel(cast)) {
         console.log(`[webhook] ignoring mention outside higher-athletics`);
+        await castReply(cast.hash, `post in /higher-athletics or reply to a channel cast so i can track your proof`);
         return;
       }
 
