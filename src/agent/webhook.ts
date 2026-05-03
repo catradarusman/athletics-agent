@@ -4,7 +4,7 @@ import type { Request, Response } from 'express';
 import type { CastWithInteractions } from '@neynar/nodejs-sdk/build/api/models/cast-with-interactions.js';
 import type { WebhookCastCreated } from '@neynar/nodejs-sdk/build/types/webhooks.js';
 import Anthropic from '@anthropic-ai/sdk';
-import { castReply, getUserByFid } from './bot.js';
+import { castReply, getUserByFid, fetchCastByHash } from './bot.js';
 import { parseCommitment } from '../ai/parser.js';
 import { validateProof } from '../ai/validator.js';
 import * as replies from './replies.js';
@@ -307,9 +307,13 @@ async function handleLeaderboard(cast: CastWithInteractions): Promise<void> {
 
 async function handleProof(cast: CastWithInteractions): Promise<void> {
   const fid        = cast.author.fid;
+  console.log(`[handleProof] fid=${fid} hash=${cast.hash} embeds=${JSON.stringify(cast.embeds)}`);
   let commitment   = await getActiveCommitmentByFid(fid);
 
-  if (!commitment) return; // silently ignore — no active commitment
+  if (!commitment) {
+    await castReply(cast.hash, `no active commitment found. use @higherathletics commit <goal> to start one`);
+    return;
+  }
 
   // Backfill commitment_id from chain if the user's createCommitment tx has confirmed
   if (commitment.commitment_id === null) {
@@ -343,7 +347,26 @@ async function handleProof(cast: CastWithInteractions): Promise<void> {
     .filter(p => p.ai_valid && p.ai_summary)
     .map(p => p.ai_summary as string);
 
-  const imageUrls = getImageUrls(cast);
+  let imageUrls = getImageUrls(cast);
+  console.log(`[handleProof] imageUrls from webhook payload: ${JSON.stringify(imageUrls)}`);
+
+  // If no images found directly, fetch the quoted cast via Neynar API.
+  // Webhook payloads may not hydrate nested cast embeds fully.
+  if (imageUrls.length === 0) {
+    const quotedHashes = (cast.embeds ?? [])
+      .map(e => (e as { cast?: { hash?: string } }).cast?.hash)
+      .filter((h): h is string => !!h);
+
+    for (const hash of quotedHashes) {
+      const fetched = await fetchCastByHash(hash);
+      if (fetched) {
+        const fromQuoted = getImageUrls(fetched);
+        console.log(`[handleProof] imageUrls from fetched quoted cast ${hash}: ${JSON.stringify(fromQuoted)}`);
+        imageUrls = [...imageUrls, ...fromQuoted];
+      }
+    }
+  }
+
   const result = await validateProof(
     commitment,
     cast.text,

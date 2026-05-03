@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { NeynarAPIClient, Configuration } from '@neynar/nodejs-sdk';
 import type { User } from '@neynar/nodejs-sdk/build/api/models/user.js';
+import type { CastWithInteractions } from '@neynar/nodejs-sdk/build/api/models/cast-with-interactions.js';
 
 // ─── Client ───────────────────────────────────────────────────────────────────
 
@@ -51,4 +52,17 @@ export async function castInChannel(text: string, channelId: string, embedUrls?:
 export async function getUserByFid(fid: number): Promise<User | null> {
   const response = await neynar.fetchBulkUsers({ fids: [fid] });
   return response.users[0] ?? null;
+}
+
+/**
+ * Fetch the full cast data for a quoted cast by hash.
+ * Returns null on any error.
+ */
+export async function fetchCastByHash(hash: string): Promise<CastWithInteractions | null> {
+  try {
+    const response = await neynar.fetchBulkCasts({ casts: [hash] });
+    return response.result.casts[0] ?? null;
+  } catch {
+    return null;
+  }
 }
