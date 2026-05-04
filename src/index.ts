@@ -10,8 +10,10 @@ import {
   getActiveCommitmentByFid,
   createCommitment,
   countActiveCommitments,
+  getProofsByCommitmentId,
   type PledgeTier,
 } from './db/queries.js';
+import { getUserByFid } from './agent/bot.js';
 
 const PORT = Number(process.env.PORT ?? 3000);
 const SNAP_API_SECRET = process.env.SNAP_API_SECRET ?? '';
@@ -159,6 +161,43 @@ async function main() {
       res.json({ activeCount });
     } catch {
       res.json({ activeCount: 0 });
+    }
+  });
+
+  app.get('/api/snap/status', async (req: Request, res: Response) => {
+    const fid = Number(req.query.fid);
+    if (!fid || isNaN(fid)) return void res.status(400).json({ found: false });
+
+    try {
+      const commitment = await getActiveCommitmentByFid(fid);
+      if (!commitment) return void res.json({ found: false });
+
+      const now = Date.now();
+      const elapsed = (now - commitment.start_time.getTime()) /
+                      (commitment.end_time.getTime() - commitment.start_time.getTime());
+      const onTrack = commitment.verified_proofs >= Math.floor(elapsed * commitment.required_proofs);
+      const daysLeft = Math.max(0, Math.ceil((commitment.end_time.getTime() - now) / 86_400_000));
+
+      const [proofs, user] = await Promise.all([
+        getProofsByCommitmentId(commitment.id),
+        getUserByFid(fid),
+      ]);
+      const lastProof = proofs[proofs.length - 1];
+
+      res.json({
+        found:          true,
+        username:       user?.username ?? String(fid),
+        template:       commitment.template,
+        verifiedProofs: commitment.verified_proofs,
+        requiredProofs: commitment.required_proofs,
+        daysLeft,
+        pledgeAmount:   commitment.pledge_amount,
+        onTrack,
+        lastProofAt:    lastProof?.created_at.toISOString() ?? null,
+      });
+    } catch (err) {
+      console.error('[api] GET /api/snap/status error:', err);
+      res.status(500).json({ found: false });
     }
   });
 
