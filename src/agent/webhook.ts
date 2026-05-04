@@ -4,7 +4,7 @@ import type { Request, Response } from 'express';
 import type { CastWithInteractions } from '@neynar/nodejs-sdk/build/api/models/cast-with-interactions.js';
 import type { WebhookCastCreated } from '@neynar/nodejs-sdk/build/types/webhooks.js';
 import Anthropic from '@anthropic-ai/sdk';
-import { castReply, getUserByFid, fetchCastByHash } from './bot.js';
+import { castReply, castInChannel, getUserByFid, fetchCastByHash, neynar } from './bot.js';
 import { parseCommitment } from '../ai/parser.js';
 import { validateProof } from '../ai/validator.js';
 import * as replies from './replies.js';
@@ -207,6 +207,42 @@ async function handleCommit(cast: CastWithInteractions, words: string[]): Promis
     }),
     SNAP_URL ? [SNAP_URL] : undefined,
   );
+
+  // Fire-and-forget — never blocks commit flow
+  void (async () => {
+    try {
+      const followingResp = await neynar.fetchUserFollowing({ fid, limit: 100 });
+      const followingFids = followingResp.users.map(f => f.user.fid);
+
+      const matches: { username: string; template: string }[] = [];
+      for (let i = 0; i < followingFids.length; i += 10) {
+        const batch = followingFids.slice(i, i + 10);
+        await Promise.all(batch.map(async (followedFid) => {
+          const active = await getActiveCommitmentByFid(followedFid);
+          if (active) {
+            const u = await getUserByFid(followedFid);
+            matches.push({ username: u?.username ?? `fid:${followedFid}`, template: active.template });
+          }
+        }));
+      }
+
+      if (matches.length === 0) return;
+
+      let text: string;
+      if (matches.length === 1) {
+        text = `@${matches[0].username} is also on a commitment this week. you're not doing this alone`;
+      } else {
+        const names = matches.slice(0, 2).map(m => `@${m.username}`).join(', ');
+        const extra = matches.length > 2 ? ` and ${matches.length - 2} others` : '';
+        text = `${matches.length} people you follow are active right now. ${names}${extra}`;
+      }
+
+      await castReply(cast.hash, text);
+      console.log(`[webhook] social graph: ${matches.length} match(es) for fid=${fid}`);
+    } catch (err) {
+      console.error('[webhook] social graph lookup failed for fid', fid, err);
+    }
+  })();
 }
 
 async function handleStatus(cast: CastWithInteractions): Promise<void> {
@@ -459,6 +495,23 @@ async function handleProof(cast: CastWithInteractions): Promise<void> {
       }),
       SNAP_URL ? [SNAP_URL] : undefined,
     );
+
+    // Fire-and-forget — never blocks proof validation flow
+    void (async () => {
+      try {
+        const user     = await getUserByFid(commitment.fid);
+        const username = user?.username ?? `fid:${commitment.fid}`;
+        const text = [
+          `@${username} just finished ${commitment.template}. ${newCount} proofs. ${commitment.pledge_amount.toLocaleString()} $HIGHER on the line the whole time.`,
+          '',
+          '/higher-athletics',
+        ].join('\n');
+        await castInChannel(text, 'higher');
+        console.log(`[webhook] streak broadcast sent for fid=${commitment.fid}`);
+      } catch (err) {
+        console.error('[webhook] streak broadcast failed for fid', commitment.fid, err);
+      }
+    })();
   } else {
     await castReply(
       cast.hash,

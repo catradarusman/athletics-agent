@@ -1,4 +1,5 @@
 import cron from 'node-cron';
+import Anthropic from '@anthropic-ai/sdk';
 import {
   getAllActiveCommitments,
   getExpiredActiveCommitments,
@@ -7,9 +8,10 @@ import {
   getWeeklyResolutionStats,
   getUnrecordedProofs,
   updateProofOnchainStatus,
+  getProofsByCommitmentId,
   type Commitment,
 } from '../db/queries.js';
-import { castInChannel, getUserByFid } from './bot.js';
+import { castInChannel, castReply, getUserByFid } from './bot.js';
 import * as replies from './replies.js';
 import {
   resolveCommitmentOnchain,
@@ -23,6 +25,7 @@ import {
 import { backfillCommitmentId } from '../db/queries.js';
 
 const CHANNEL_ID = 'higher-athletics';
+const anthropic  = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const SNAP_URL = (process.env.SNAP_URL ?? '').trim() || undefined;
 
 // ─── Spam guard ───────────────────────────────────────────────────────────────
@@ -252,6 +255,48 @@ async function runResolutionCron(): Promise<void> {
 
       await castInChannel(text, CHANNEL_ID, SNAP_URL && passed ? [SNAP_URL] : undefined);
       console.log(`[cron:resolution] notified fid=${c.fid} outcome=${passed ? 'passed' : 'failed'}`);
+
+      // Post-failure analysis — fire-and-forget, never blocks settlement
+      if (!passed) {
+        void (async () => {
+          try {
+            const proofs = await getProofsByCommitmentId(c.id);
+            if (proofs.length === 0) return;
+            const durationDays = Math.ceil(
+              (c.end_time.getTime() - c.start_time.getTime()) / 86_400_000
+            );
+            const timeline = proofs
+              .map(p => {
+                const day = Math.ceil((p.created_at.getTime() - c.start_time.getTime()) / 86_400_000);
+                return `day ${day}: ${p.ai_summary ?? p.cast_text ?? '(no content)'} [${p.ai_valid ? 'valid' : 'invalid'}]`;
+              })
+              .join('\n');
+
+            const resp = await anthropic.messages.create({
+              model:      'claude-sonnet-4-6',
+              max_tokens: 150,
+              system:     'You are the Higher Athletics bot. You speak in lowercase. No punctuation at end of last line. Max 3 lines. Be specific about the pattern. Never motivate — only describe what the data shows.',
+              messages: [{
+                role:    'user',
+                content: `Commitment: ${c.template}, ${c.required_proofs} proofs needed over ${durationDays} days.\nProof history:\n${timeline || '(none)'}\nTotal submitted: ${c.verified_proofs}/${c.required_proofs}\n\nIn 2-3 lines, describe exactly where and when this person dropped off. Be specific. No advice.`,
+              }],
+            });
+
+            const analysis = resp.content[0].type === 'text' ? resp.content[0].text.trim() : null;
+            if (!analysis) return;
+
+            const lastHash = proofs.length > 0 ? proofs[proofs.length - 1].cast_hash : null;
+            if (lastHash) {
+              await castReply(lastHash, analysis);
+            } else {
+              await castInChannel(`@${username} ${analysis}`, CHANNEL_ID);
+            }
+            console.log(`[cron:resolution] post-failure analysis sent for fid=${c.fid}`);
+          } catch (err) {
+            console.error('[cron:resolution] post-failure analysis failed for fid', c.fid, err);
+          }
+        })();
+      }
 
       // Clean up retry counter on success
       resolutionRetries.delete(c.id);

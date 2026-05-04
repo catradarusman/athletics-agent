@@ -4,6 +4,7 @@ import type { Request, Response } from 'express';
 import { initDb } from './db/index.js';
 import { webhookRouter } from './agent/webhook.js';
 import { registerCronJobs } from './agent/cron.js';
+import { registerNudgeCron } from './cron/nudge.js';
 import {
   getLatestCommitmentByFid,
   getActiveCommitmentByFid,
@@ -166,6 +167,7 @@ async function main() {
   });
 
   registerCronJobs();
+  registerNudgeCron();
 }
 
 main().catch(err => {
