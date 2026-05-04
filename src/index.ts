@@ -203,10 +203,8 @@ async function main() {
 
   app.get('/api/snap/templates', async (_req: Request, res: Response) => {
     const TEMPLATES = [
-      { name: 'sprint',         label: 'sprint',         duration: 7,  proofs: 3  },
-      { name: 'monthly-grind',  label: 'monthly grind',  duration: 30, proofs: 20 },
-      { name: 'builders-block', label: 'builders block', duration: 14, proofs: 10 },
-      { name: 'beast-mode',     label: 'beast mode',     duration: 30, proofs: 30 },
+      { name: '15-day', label: '15 days', duration: 15, proofs: 10, amount: 5_000  },
+      { name: '30-day', label: '30 days', duration: 30, proofs: 20, amount: 10_000 },
     ];
     try {
       const r = await query<{ passed: string; ended: string }>(
