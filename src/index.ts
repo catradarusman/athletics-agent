@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import type { Request, Response } from 'express';
-import { initDb } from './db/index.js';
+import { initDb, query } from './db/index.js';
 import { webhookRouter } from './agent/webhook.js';
 import { registerCronJobs } from './agent/cron.js';
 import { registerNudgeCron } from './cron/nudge.js';
@@ -13,7 +13,7 @@ import {
   getProofsByCommitmentId,
   type PledgeTier,
 } from './db/queries.js';
-import { getUserByFid } from './agent/bot.js';
+import { getUserByFid, neynar } from './agent/bot.js';
 
 const PORT = Number(process.env.PORT ?? 3000);
 const SNAP_API_SECRET = process.env.SNAP_API_SECRET ?? '';
@@ -198,6 +198,127 @@ async function main() {
     } catch (err) {
       console.error('[api] GET /api/snap/status error:', err);
       res.status(500).json({ found: false });
+    }
+  });
+
+  app.get('/api/snap/templates', async (_req: Request, res: Response) => {
+    const TEMPLATES = [
+      { name: 'sprint',         label: 'sprint',         duration: 7,  proofs: 3  },
+      { name: 'monthly-grind',  label: 'monthly grind',  duration: 30, proofs: 20 },
+      { name: 'builders-block', label: 'builders block', duration: 14, proofs: 10 },
+      { name: 'beast-mode',     label: 'beast mode',     duration: 30, proofs: 30 },
+    ];
+    try {
+      const r = await query<{ passed: string; ended: string }>(
+        `SELECT COUNT(*) FILTER (WHERE outcome = 'passed') AS passed,
+                COUNT(*) FILTER (WHERE status = 'end')     AS ended
+         FROM commitments`,
+        []
+      );
+      const { passed, ended } = r.rows[0];
+      const successRate = Number(ended) > 0 ? Math.round((Number(passed) / Number(ended)) * 100) : 0;
+      res.json(TEMPLATES.map(t => ({ ...t, successRate })));
+    } catch (err) {
+      console.error('[api] GET /api/snap/templates error:', err);
+      res.json(TEMPLATES.map(t => ({ ...t, successRate: 0 })));
+    }
+  });
+
+  app.get('/api/snap/leaderboard', async (_req: Request, res: Response) => {
+    const now = new Date();
+    const daysFromMon = (now.getUTCDay() + 6) % 7;
+    const weekStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - daysFromMon));
+    const weekEnd   = new Date(weekStart.getTime() + 7 * 86_400_000);
+
+    try {
+      const [topRows, statsRow, poolRow] = await Promise.all([
+        query<{ fid: string; verified_proofs: number; template: string }>(
+          `SELECT fid, verified_proofs, template
+           FROM commitments
+           WHERE (status IN ('created','paid') OR outcome = 'passed')
+             AND created_at >= $1 AND created_at < $2
+           ORDER BY verified_proofs DESC
+           LIMIT 5`,
+          [weekStart, weekEnd]
+        ),
+        query<{ active: string; passed: string; failed: string }>(
+          `SELECT COUNT(*) FILTER (WHERE status IN ('created','paid'))           AS active,
+                  COUNT(*) FILTER (WHERE status = 'end' AND outcome = 'passed') AS passed,
+                  COUNT(*) FILTER (WHERE status = 'end' AND outcome = 'failed') AS failed
+           FROM commitments
+           WHERE created_at >= $1 AND created_at < $2`,
+          [weekStart, weekEnd]
+        ),
+        query<{ balance: string }>(
+          `SELECT COALESCE(SUM(CASE WHEN event_type IN ('seed','failure') THEN amount ELSE -amount END), 0) AS balance
+           FROM pool_events
+           WHERE event_type IN ('seed','failure','payout')`,
+          []
+        ),
+      ]);
+
+      const fids = topRows.rows.map(r => Number(r.fid));
+      const usernameMap = new Map<number, string>();
+      if (fids.length > 0) {
+        const users = await neynar.fetchBulkUsers({ fids });
+        users.users.forEach(u => usernameMap.set(u.fid, u.username));
+      }
+
+      const sun = new Date(weekEnd.getTime() - 86_400_000);
+      const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      const sm = MONTHS[weekStart.getUTCMonth()];
+      const em = MONTHS[sun.getUTCMonth()];
+      const week = sm === em
+        ? `${sm} ${weekStart.getUTCDate()}–${sun.getUTCDate()}`
+        : `${sm} ${weekStart.getUTCDate()}–${em} ${sun.getUTCDate()}`;
+
+      res.json({
+        week,
+        topUsers: topRows.rows.map(r => ({
+          fid:      Number(r.fid),
+          username: usernameMap.get(Number(r.fid)) ?? String(r.fid),
+          proofs:   r.verified_proofs,
+          template: r.template,
+        })),
+        stats: {
+          active:      Number(statsRow.rows[0].active),
+          passed:      Number(statsRow.rows[0].passed),
+          failed:      Number(statsRow.rows[0].failed),
+          poolBalance: Number(poolRow.rows[0].balance),
+        },
+      });
+    } catch (err) {
+      console.error('[api] GET /api/snap/leaderboard error:', err);
+      res.status(500).json({ error: 'internal error' });
+    }
+  });
+
+  app.get('/api/snap/social', async (req: Request, res: Response) => {
+    const fid = Number(req.query.fid);
+    if (!fid || isNaN(fid)) return void res.status(400).json({ followingActive: 0, names: [] });
+
+    try {
+      const followingResp = await neynar.fetchUserFollowing({ fid, limit: 100 });
+      const followingFids = followingResp.users.map(f => f.user.fid);
+
+      if (followingFids.length === 0) return void res.json({ followingActive: 0, names: [] });
+
+      const r = await query<{ fid: string }>(
+        `SELECT DISTINCT fid FROM commitments
+         WHERE status IN ('created','paid') AND end_time > NOW() AND fid = ANY($1)`,
+        [followingFids]
+      );
+
+      const activeFids = r.rows.map(row => Number(row.fid));
+      if (activeFids.length === 0) return void res.json({ followingActive: 0, names: [] });
+
+      const users = await neynar.fetchBulkUsers({ fids: activeFids });
+      const names = users.users.map(u => u.username);
+
+      res.json({ followingActive: activeFids.length, names });
+    } catch (err) {
+      console.error('[api] GET /api/snap/social error:', err);
+      res.json({ followingActive: 0, names: [] });
     }
   });
 
